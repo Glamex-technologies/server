@@ -18,7 +18,7 @@ module.exports = class UserController {
     async register(req, res) { 
         console.log('UserController@register');
         const data = req.body;
-        const otp = 1111; // Static OTP for now
+        const otp = "1111"; // Static OTP for now (string format)
         const hashedPassword = bcrypt.hashSync(data.password, 10);
 
         // Prepare user object for creation
@@ -37,7 +37,13 @@ module.exports = class UserController {
             city_id: data.city_id,
             gender: data.gender,
         }       
+        console.log('Creating user with data:', { ...userObj, password: '[HIDDEN]' });
         const user = await userResources.create(userObj);
+        console.log('User created/updated:', {
+            id: user.id,
+            verification_otp: user.verification_otp,
+            verification_otp_created_at: user.verification_otp_created_at
+        });
         // Prepare response object
         const result = {
             id: user.id,
@@ -58,17 +64,51 @@ module.exports = class UserController {
         try{
             console.log('UserController@verifyVerificationOtp');
             const data = req.body;
+            console.log('Verification request data:', data);
+            
             let user = await userResources.findOne({ id: data.user_id });
             if(!user){
                 return response.badRequest('User not found', res, false);
             }
-            if(user.verification_otp !== data.otp){
+            
+            console.log('User found:', {
+                id: user.id,
+                verification_otp: user.verification_otp,
+                verification_otp_created_at: user.verification_otp_created_at,
+                is_verified: user.is_verified
+            });
+            
+            // Check if OTP exists
+            if(!user.verification_otp){
+                return response.badRequest('No OTP found. Please request a new OTP.', res, false);
+            }
+            
+            // Check OTP timeout (10 minutes = 600000 ms) - but don't delete user
+            const otpCreatedAt = new Date(user.verification_otp_created_at);
+            const now = new Date();
+            const timeDiff = now - otpCreatedAt;
+            const timeoutMs = 10 * 60 * 1000; // 10 minutes
+            
+            if(timeDiff > timeoutMs){
+                return response.badRequest('OTP has expired (10 minutes). Please request a new OTP.', res, false);
+            }
+            
+            // Compare OTPs as strings
+            const userOtp = String(user.verification_otp);
+            const providedOtp = String(data.otp);
+            console.log('OTP Comparison:', { userOtp, providedOtp, match: userOtp === providedOtp });
+            
+            if(userOtp !== providedOtp){
                 return response.badRequest('Invalid OTP', res, false);
             }
 
             // Mark user as verified
             user = await userResources.updateUser(
-                { verified_at: new Date(), verification_otp: null, verification_otp_created_at: null },
+                { 
+                    is_verified: 1, 
+                    verification_otp: null, 
+                    verification_otp_created_at: null 
+                },
                 { id: data.user_id }
             );
             // Prepare user object for token
@@ -82,7 +122,7 @@ module.exports = class UserController {
                 phone_number: user.phone_number,
                 country_id: user.country_id,
                 city_id: user.city_id,
-                verified_at: user.verified_at
+                is_verified: user.is_verified
             };
             // Generate JWT token
             const accessToken = await genrateToken({ ...userObj, userType: "user" });
@@ -90,7 +130,7 @@ module.exports = class UserController {
                 access_token: accessToken,
                 user: userObj
             }
-            return response.success('User registered successfully', res, result);
+            return response.success('User verified and registered successfully', res, result);
         } catch (err){
             console.log(err);
             return response.exception("server error", res);
@@ -100,12 +140,12 @@ module.exports = class UserController {
     // Resend OTP to user
     async resendOtp(req, res) {
         console.log('UserController@resendOtp');
-        const data = req.query;
+        const data = req.body;
         let user = await userResources.findOne({ id: data.user_id });
         if(!user){
             return response.badRequest('User not found', res, false);
         }
-        const otp = 1111; // Static OTP for now
+        const otp = "1111"; // Static OTP for now (string format)
         user = await userResources.updateUser(
             { verification_otp: otp, verification_otp_created_at: new Date() },
             { id: data.user_id }
@@ -126,11 +166,11 @@ module.exports = class UserController {
     async authenticate(req, res) { 
         console.log('UserController@authenticate');
         const user = req.user;
-        if(!user.verified_at){
+        if(!user.is_verified){
             // If not verified, send OTP
-            const otp = 1111;
+            const otp = "1111"; // String format for consistency
             const userUpdate = await userResources.updateUser(
-                { verification_otp: otp },
+                { verification_otp: otp, verification_otp_created_at: new Date() },
                 { id: user.id }
             );
             const result = {
@@ -142,7 +182,7 @@ module.exports = class UserController {
                 phone_code: user.phone_code,
                 phone_number: user.phone_number,
                 city_id: user.city_id,
-                verified_at: user.verified_at
+                is_verified: user.is_verified
             };
             return response.success('We have sent a OTP over your registered phone number. Please verify by using the OTP.', res, result);
         }
@@ -165,7 +205,7 @@ module.exports = class UserController {
                 phone_code: user.phone_code,
                 phone_number: user.phone_number,
                 city_id: user.city_id,
-                verified_at: user.verified_at
+                is_verified: user.is_verified
             }
         }
         return response.success('Login successfully', res, result);
@@ -176,7 +216,7 @@ module.exports = class UserController {
         console.log('UserController@forgotPassword');
         const data = req.body;
         let user = await userResources.findOne({ phone_code: data.phone_code, phone_number: data.phone_number });
-        const otp = 1111;
+        const otp = "1111"; // String format for consistency
         if(!user){
             return response.badRequest('User not found', res, false);
         }
@@ -254,9 +294,7 @@ module.exports = class UserController {
                 },
             }   
             ),
-            verified_at: {
-                [Op.not]: null,
-            },            
+            is_verified: 1,            
         };
         const attributes = [
             'id',
@@ -269,7 +307,7 @@ module.exports = class UserController {
             'phone_number',
             'email',
             'gender',
-            'verified_at',
+            'is_verified',
             'created_at'
         ];
         try {

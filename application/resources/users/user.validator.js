@@ -73,7 +73,7 @@ module.exports = class UserValidator {
             }
             // Check if phone number already exists
             let user = await userResources.findOne({ phone_code: req.body.phone_code, phone_number: req.body.phone_number });
-            if (user && user.verified_at) {
+            if (user && user.is_verified) {
                 return response.badRequest('Phone number already exists.', res);
             }
             next();

@@ -57,12 +57,15 @@ module.exports = class UserResources {
       // If user exists, update with new data
       if (!created) {
         await User.update(data, {
-            where: { id: user.id } // <-- FIX: Pass `where` condition
+            where: { id: user.id }
         });
+        // Return the updated user data
+        const updatedUser = await User.findOne({ where: { id: user.id } });
+        return updatedUser;
       }
       return user;
     } catch (error) {
-      console.error('Error in creating admin:', error);
+      console.error('Error in creating user:', error);
       throw error;
     }
   }
