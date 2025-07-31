@@ -27,6 +27,11 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: false,
       },
+      type: {
+        type: Sequelize.STRING,
+        allowNull: false,
+        defaultValue: "user",
+      },
 
       phone_code: {
         // snake_case applied
@@ -93,6 +98,10 @@ module.exports = {
         type: Sequelize.TINYINT,
         allowNull: false,
         defaultValue: 0, // 0 = not verified, 1 = verified
+      },
+      verified_at: {
+        type: Sequelize.DATE,
+        allowNull: true
       },
 
       // details needed in registration//

@@ -9,6 +9,7 @@ module.exports = {
         primaryKey: true,
         allowNull: false
       },
+      // details needed in registration//
       first_name: {
         type: Sequelize.STRING,
         allowNull: false
@@ -21,6 +22,11 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: false
       },
+      type: {
+        type: Sequelize.STRING,
+        allowNull: false,
+        defaultValue: "service_provider"
+      },
       phone_code: {
         type: Sequelize.STRING,
         allowNull: false
@@ -29,6 +35,11 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: false
       },
+      gender: {
+        type: Sequelize.TINYINT,
+        allowNull: false,
+        defaultValue: 1
+      },  
       email: {
         type: Sequelize.STRING,
         allowNull: true
@@ -37,27 +48,36 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: false
       },
-      step_completed: {
-        type: Sequelize.INTEGER,
-        allowNull: false,
-        defaultValue: 0
-      },
       terms_and_condition: {
         type: Sequelize.TINYINT,
         allowNull: false,
         defaultValue: 0
       },
       verification_otp: {
+        // snake_case applied
         type: Sequelize.STRING,
-        allowNull: true
+        allowNull: true,
       },
       verification_otp_created_at: {
+        // snake_case applied - timestamp when OTP was created for timeout logic
         type: Sequelize.DATE,
-        allowNull: true
+        allowNull: true,
+      },
+      is_verified: {
+        type: Sequelize.TINYINT,
+        allowNull: false,
+        defaultValue: 0, // 0 = not verified, 1 = verified
       },
       verified_at: {
         type: Sequelize.DATE,
         allowNull: true
+      },
+      // details needed in registration//
+
+      step_completed: {
+        type: Sequelize.INTEGER,
+        allowNull: false,
+        defaultValue: 0
       },
       admin_verified: {
         type: Sequelize.TINYINT,
@@ -146,11 +166,7 @@ module.exports = {
         type: Sequelize.DATE,
         allowNull: true
       },
-      gender: {
-        type: Sequelize.TINYINT,
-        allowNull: false,
-        defaultValue: 1
-      },
+      
       deleted_at: {
         type: Sequelize.DATE,
         allowNull: true

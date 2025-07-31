@@ -7,6 +7,7 @@ module.exports = (sequelize, DataTypes) => {
       primaryKey: true,
       allowNull: false
     },
+    // details needed in registration//
     first_name: {
       type: DataTypes.STRING,
       allowNull: false
@@ -18,6 +19,11 @@ module.exports = (sequelize, DataTypes) => {
     full_name: {
       type: DataTypes.STRING,
       allowNull: false
+    },
+    type: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: "service_provider"
     },
     phone_code: {
       type: DataTypes.STRING,
@@ -48,10 +54,17 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATE,
       allowNull: true
     },
+    is_verified: {
+      type: DataTypes.TINYINT,
+      allowNull: false,
+      defaultValue: 0
+    },
     verified_at: {
       type: DataTypes.DATE,
       allowNull: true
     },
+    // details needed in registration//
+
     admin_verified: {
       type: DataTypes.TINYINT,
       allowNull: false,

@@ -22,6 +22,12 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
         allowNull: false,
       },
+      type: {
+        type: DataTypes.STRING,
+        allowNull: false,
+        defaultValue: "user",
+      },
+      
       phone_code: {
         type: DataTypes.STRING,
         allowNull: false,
@@ -68,6 +74,10 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.TINYINT,
         allowNull: false,
         defaultValue: 0, // 0 = not verified, 1 = verified
+      },
+      verified_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
       },
       // details needed in registration//
       profile_image: {
