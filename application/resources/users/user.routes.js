@@ -16,13 +16,7 @@ router.post("/verify-verification-otp", [userValidator.verifyVerificationOtp], u
 router.patch("/resend-otp", [userValidator.resendOtp], userController.resendOtp); // Resend OTP - Update user with new OTP(done)
 // User Registration //
 
-// Authentication
-router.post("/authenticate", [userValidator.authenticate], userController.authenticate); // User login
-
-// Password Recovery
-router.post("/forgot-password", [userValidator.forgotPassword], userController.forgotPassword); // Send OTP for forgotten password
-router.post("/verify-forgot-password-otp", [userValidator.verifyForgotPasswordOtp], userController.verifyForgotPasswordOtp); // Verify OTP for password reset
-router.post("/reset-password", [userValidator.resetPassword], userController.resetPassword); // Reset password
+// Authentication methods moved to /api/v1/auth routes for unified login
 
 // Admin: User Management
 router.get("/get-all", [adminAuth, userValidator.getAllUsers], userController.getAllUsers); // Admin gets list of all users

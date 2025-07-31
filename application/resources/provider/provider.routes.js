@@ -34,17 +34,7 @@ router.post("/set-service-details",[providerAuth,providerValidator.setServiceDet
 // Route to set provider availability with auth and validation
 router.post("/set-availbilty",[providerAuth, providerValidator.setAvailability], providerController.setAvailability);
 
-// Route for provider authentication (login) with validation
-router.post("/authenticate",[providerValidator.authenticate] ,providerController.authenticate);
-
-// Route to initiate forgot password flow with validation
-router.post("/forgot-password",[providerValidator.forgotPassword] ,providerController.forgotPassword);
-
-// Route to verify OTP sent for forgot password flow with validation
-router.post("/verify-forgot-password-otp",[providerValidator.verifyForgotPasswordOtp] ,providerController.verifyForgotPasswordOtp); 
-
-// Route to reset password with validation
-router.post("/reset-password",[providerValidator.resetPassword] ,providerController.resetPassword); 
+// Authentication methods moved to /api/v1/auth routes for unified login 
 
 // Routes below require admin authentication and validation
 
