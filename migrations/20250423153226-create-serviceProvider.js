@@ -53,16 +53,7 @@ module.exports = {
         allowNull: false,
         defaultValue: 0
       },
-      verification_otp: {
-        // snake_case applied
-        type: Sequelize.STRING,
-        allowNull: true,
-      },
-      verification_otp_created_at: {
-        // snake_case applied - timestamp when OTP was created for timeout logic
-        type: Sequelize.DATE,
-        allowNull: true,
-      },
+
       is_verified: {
         type: Sequelize.TINYINT,
         allowNull: false,

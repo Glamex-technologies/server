@@ -3,6 +3,8 @@ const { Op } = require("sequelize");
 const UserResources = require("./user.resources");
 const ResponseHelper = require("../../helpers/response.helpers");
 const { genrateToken } = require("../../helpers/jwtToken.helpers");
+const db = require("../../../startup/model");
+const OtpVerification = db.models.OtpVerification;
 const userResources = new UserResources();
 const response = new ResponseHelper();
 
@@ -18,7 +20,6 @@ module.exports = class UserController {
   async register(req, res) {
     console.log("UserController@register");
     const data = req.body;
-    const otp = "1111"; // Static OTP for now (string format)
     const hashedPassword = bcrypt.hashSync(data.password, 10);
 
     // Prepare user object for creation
@@ -26,14 +27,12 @@ module.exports = class UserController {
       first_name: data.first_name,
       last_name: data.last_name,
       full_name: data.first_name + " " + data.last_name,
-      type: "user",
+      user_type: "user",
       email: data.email,
       phone_code: data.phone_code,
       phone_number: data.phone_number,
       password: hashedPassword,
       terms_and_condition: 1,
-      verification_otp: otp,
-      verification_otp_created_at: new Date(),
       country_id: data.country_id,
       city_id: data.city_id,
       gender: data.gender,
@@ -43,18 +42,31 @@ module.exports = class UserController {
       password: "[HIDDEN]",
     });
     const user = await userResources.create(userObj);
-    console.log("User created/updated:", {
-      id: user.id,
-      verification_otp: user.verification_otp,
-      verification_otp_created_at: user.verification_otp_created_at,
-    });
+    console.log("User created:", { id: user.id });
+
+    // Create OTP using the new system
+    try {
+      const otpRecord = await OtpVerification.createForEntity(
+        'user',
+        user.id,
+        data.phone_code + data.phone_number,
+        'registration'
+      );
+      console.log("OTP created:", {
+        otp_code: otpRecord.otp_code,
+        expires_at: otpRecord.expires_at,
+      });
+    } catch (error) {
+      console.error("Error creating OTP:", error);
+      // Continue without failing registration
+    }
     // Prepare response object
     const result = {
       id: user.id,
       first_name: user.first_name,
       last_name: user.last_name,
       full_name: user.full_name,
-      type: user.type,
+      user_type: user.user_type,
       email: user.email,
       phone_code: user.phone_code,
       phone_number: user.phone_number,
@@ -76,55 +88,27 @@ module.exports = class UserController {
         return response.badRequest("User not found", res, false);
       }
 
-      console.log("User found:", {
-        id: user.id,
-        verification_otp: user.verification_otp,
-        verification_otp_created_at: user.verification_otp_created_at,
-        is_verified: user.is_verified,
-      });
+      console.log("User found:", { id: user.id, is_verified: user.is_verified });
 
-      // Check if OTP exists
-      if (!user.verification_otp) {
-        return response.badRequest(
-          "No OTP found. Please request a new OTP.",
-          res,
-          false
-        );
+      // Verify OTP using the new system
+      const verificationResult = await OtpVerification.verifyForEntity(
+        'user',
+        user.id,
+        String(data.otp),
+        'registration'
+      );
+
+      if (!verificationResult.success) {
+        return response.badRequest(verificationResult.message, res, false);
       }
 
-      // Check OTP timeout (10 minutes = 600000 ms) - but don't delete user
-      const otpCreatedAt = new Date(user.verification_otp_created_at);
-      const now = new Date();
-      const timeDiff = now - otpCreatedAt;
-      const timeoutMs = 10 * 60 * 1000; // 10 minutes
-
-      if (timeDiff > timeoutMs) {
-        return response.badRequest(
-          "OTP has expired (10 minutes). Please request a new OTP.",
-          res,
-          false
-        );
-      }
-
-      // Compare OTPs as strings
-      const userOtp = String(user.verification_otp);
-      const providedOtp = String(data.otp);
-      console.log("OTP Comparison:", {
-        userOtp,
-        providedOtp,
-        match: userOtp === providedOtp,
-      });
-
-      if (userOtp !== providedOtp) {
-        return response.badRequest("Invalid OTP", res, false);
-      }
+      console.log("OTP verified successfully");
 
       // Mark user as verified
       user = await userResources.updateUser(
         {
           is_verified: 1,
-          verification_otp: null,
-          verification_otp_created_at: null,
+          verified_at: new Date(),
         },
         { id: data.user_id }
       );
@@ -134,7 +118,7 @@ module.exports = class UserController {
         first_name: user.first_name,
         last_name: user.last_name,
         full_name: user.full_name,
-        type: user.type,
+        user_type: user.user_type,
         email: user.email,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
@@ -167,17 +151,29 @@ module.exports = class UserController {
     if (!user) {
       return response.badRequest("User not found", res, false);
     }
-    const otp = "1111"; // Static OTP for now (string format)
-    user = await userResources.updateUser(
-      { verification_otp: otp, verification_otp_created_at: new Date() },
-      { id: data.user_id }
-    );
+    
+    // Create new OTP using the new system
+    try {
+      const otpRecord = await OtpVerification.createForEntity(
+        'user',
+        user.id,
+        user.phone_code + user.phone_number,
+        'registration'
+      );
+      console.log("New OTP created:", {
+        otp_code: otpRecord.otp_code,
+        expires_at: otpRecord.expires_at,
+      });
+    } catch (error) {
+      console.error("Error creating OTP:", error);
+      return response.exception("Failed to create OTP", res);
+    }
     const result = {
       id: user.id,
       first_name: user.first_name,
       last_name: user.last_name,
       full_name: user.full_name,
-      type: user.type,
+      user_type: user.user_type,
       email: user.email,
       phone_code: user.phone_code,
       phone_number: user.phone_number,
@@ -185,7 +181,148 @@ module.exports = class UserController {
     return response.success("OTP resent successfully", res, result);
   }
 
-  // Authentication methods moved to AuthController for unified login
+  // Authenticate user (login)
+  async authenticate(req, res) {
+    console.log("UserController@authenticate");
+    const user = req.user;
+    if (!user.is_verified) {
+      // If not verified, send OTP using new system
+      try {
+        const otpRecord = await OtpVerification.createForEntity(
+          'user',
+          user.id,
+          user.phone_code + user.phone_number,
+          'login'
+        );
+        console.log("Login OTP created:", {
+          otp_code: otpRecord.otp_code,
+          expires_at: otpRecord.expires_at,
+        });
+      } catch (error) {
+        console.error("Error creating login OTP:", error);
+      }
+      const result = {
+        id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        user_type: user.user_type,
+        email: user.email,
+        phone_code: user.phone_code,
+        phone_number: user.phone_number,
+        city_id: user.city_id,
+        is_verified: user.is_verified,
+      };
+      return response.success(
+        "We have sent a OTP over your registered phone number. Please verify by using the OTP.",
+        res,
+        result
+      );
+    }
+    // If verified, generate token
+    const userObj = {
+      id: user.id,
+      phone_code: user.phone_code,
+      phone_number: user.phone_number,
+      user_type: user.user_type,
+    };
+    const accessToken = await genrateToken(userObj);
+    const result = {
+      access_token: accessToken,
+      user: {
+        id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        user_type: user.user_type,
+        email: user.email,
+        phone_code: user.phone_code,
+        phone_number: user.phone_number,
+        city_id: user.city_id,
+        is_verified: user.is_verified,
+      },
+    };
+    return response.success("Login successfully", res, result);
+  }
+
+  // Forgot password - send OTP
+  async forgotPassword(req, res) {
+    console.log("UserController@forgotPassword");
+    const data = req.body;
+    let user = await userResources.findOne({
+      phone_code: data.phone_code,
+      phone_number: data.phone_number,
+    });
+    if (!user) {
+      return response.badRequest("User not found", res, false);
+    }
+    
+    // Create OTP for password reset using new system
+    try {
+      const otpRecord = await OtpVerification.createForEntity(
+        'user',
+        user.id,
+        data.phone_code + data.phone_number,
+        'password_reset'
+      );
+      console.log("Password reset OTP created:", {
+        otp_code: otpRecord.otp_code,
+        expires_at: otpRecord.expires_at,
+      });
+    } catch (error) {
+      console.error("Error creating password reset OTP:", error);
+      return response.exception("Failed to create OTP", res);
+    }
+    const result = {
+      id: user.id,
+      phone_code: user.phone_code,
+      phone_number: user.phone_number,
+    };
+    return response.success("OTP sent successfully", res, result);
+  }
+
+  // Verify OTP for forgot password
+  async verifyForgotPasswordOtp(req, res) {
+    console.log("UserController@verifyForgotPasswordOtp");
+    const data = req.body;
+    let user = await userResources.findOne({ id: data.user_id });
+    if (!user) {
+      return response.badRequest("User not found", res, false);
+    }
+    // Verify OTP using the new system
+    const verificationResult = await OtpVerification.verifyForEntity(
+      'user',
+      user.id,
+      String(data.otp),
+      'password_reset'
+    );
+
+    if (!verificationResult.success) {
+      return response.badRequest(verificationResult.message, res, false);
+    }
+
+    console.log("Password reset OTP verified successfully");
+    const result = {
+      id: user.id,
+    };
+    return response.success("user verified successfully", res, result);
+  }
+
+  // Reset password after OTP verification
+  async resetPassword(req, res) {
+    console.log("UserController@resetPassword");
+    const data = req.body;
+    let user = await userResources.findOne({ id: data.user_id });
+    if (!user) {
+      return response.badRequest("User not found", res, false);
+    }
+    const hashedPassword = bcrypt.hashSync(data.password, 10);
+    user = await userResources.updateUser(
+      { password: hashedPassword },
+      { id: data.user_id }
+    );
+    return response.success("Password updated successfully", res, null);
+  }
 
   // Get all users with pagination, search, and filters
   async getAllUsers(req, res) {

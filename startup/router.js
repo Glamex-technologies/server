@@ -1,7 +1,6 @@
 const express = require("express");
 const routes = express.Router();
 
-const AuthRoutes = require("../application/resources/auth/auth.routes");
 const UserRoutes = require("../application/resources/users/user.routes");
 const AdminRoutes = require("../application/resources/admin/admin.routes");
 const ProviderRoutes = require("../application/resources/provider/provider.routes");
@@ -24,7 +23,6 @@ const ServiceListRoutes = require("../application/resources/serviceList/serviceL
 const GalleryRoutes = require("../application/resources/gallery/gallery.routes");
 
 // Import all routes here and add them to the routes object
-routes.use("/auth", AuthRoutes); // Unified authentication routes
 routes.use("/user", UserRoutes);
 routes.use("/admin", AdminRoutes);
 routes.use("/provider", ProviderRoutes);

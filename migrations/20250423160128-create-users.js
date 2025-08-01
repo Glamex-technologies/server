@@ -27,8 +27,8 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: false,
       },
-      type: {
-        type: Sequelize.STRING,
+      user_type: {
+        type: Sequelize.ENUM(['user', 'provider']),
         allowNull: false,
         defaultValue: "user",
       },
@@ -84,16 +84,7 @@ module.exports = {
         allowNull: false,
         defaultValue: 0, // 0 = not agreed, 1 = agreed
       },
-      verification_otp: {
-        // snake_case applied
-        type: Sequelize.STRING,
-        allowNull: true,
-      },
-      verification_otp_created_at: {
-        // snake_case applied - timestamp when OTP was created for timeout logic
-        type: Sequelize.DATE,
-        allowNull: true,
-      },
+
       is_verified: {
         type: Sequelize.TINYINT,
         allowNull: false,
@@ -101,7 +92,7 @@ module.exports = {
       },
       verified_at: {
         type: Sequelize.DATE,
-        allowNull: true
+        allowNull: true,
       },
 
       // details needed in registration//
@@ -110,6 +101,16 @@ module.exports = {
         // snake_case applied
         type: Sequelize.STRING,
         allowNull: true,
+      },
+      favourites: {
+        type: Sequelize.INTEGER,
+        allowNull: true,
+        references: {
+          model: "service_providers",
+          key: "id",
+        },
+        onUpdate: "CASCADE",
+        onDelete: "SET NULL",
       },
 
       latitude: {

@@ -8,7 +8,40 @@ const UserResources = require('./user.resources');
 const userResources = new UserResources();
 
 module.exports = class UserValidator {
-    // Authentication validation moved to AuthValidator for unified login
+    /**
+     * Validates user authentication request
+     * Checks phone number, password and account status
+     */
+    async authenticate(req, res, next) {
+        console.log('UserValidator@authenticate');
+        try {
+            let schema = {
+                phone_code: joi.string().pattern(/^\d+$/).required(),
+                phone_number: joi.string().pattern(/^\d+$/).required(),
+                password: joi.string().required()
+            }
+            let errors = await joiHelper.joiValidation(req.body, schema);
+            if (errors) {
+                return response.validationError('invalid request', res, errors[0])
+            }
+            let user = await userResources.getAllDetails({ phone_code: req.body.phone_code, phone_number: req.body.phone_number });
+            if (!user) {
+                return response.validationError('User not found', res, false);
+            }
+            let isPasswordValid = await joiHelper.validatePassword(req.body.password, user.password);
+            if (!isPasswordValid) {
+                return response.validationError("Invalid password", res, false);
+            }
+            if (user.status !== 1) {
+                return response.validationError("Your account is not active", res, false);
+            }
+            req.user = user;
+            next();
+        } catch (err) {
+            console.error('Validation Error: ', err);
+            return response.exception('Server error occurred', res);
+        }
+    }
 
     /**
      * Validates user registration request
@@ -93,7 +126,79 @@ module.exports = class UserValidator {
         }
     }
 
-    // Forgot password validation methods moved to AuthValidator for unified authentication
+    /**
+     * Validates forgot password request
+     * Checks phone number exists
+     */
+    async forgotPassword(req, res, next) {
+        console.log('UserValidator@forgotPassword');
+        try {
+            let schema = {
+                phone_code: joi.string().pattern(/^\d+$/).required(),
+                phone_number: joi.string().pattern(/^\d+$/).required()
+            }
+            let errors = await joiHelper.joiValidation(req.body, schema);
+            if (errors) {
+                return response.validationError('invalid request', res, errors[0])
+            }
+            let user = await userResources.findOne({ phone_code: req.body.phone_code, phone_number: req.body.phone_number });
+            if (!user) {
+                return response.validationError('User not found', res, false);
+            }
+            next();
+        } catch (err) {
+            console.error('Validation Error: ', err);
+            return response.exception('Server error occurred', res);
+        }
+    }
+
+    /**
+     * Validates forgot password OTP verification
+     * Checks user ID and OTP format
+     */
+    async verifyForgotPasswordOtp(req, res, next) {
+        console.log('UserValidator@verifyForgotPasswordOtp');
+        try {
+            let schema = {
+                user_id: joi.number().required().min(1),
+                otp: joi.string().length(4).pattern(/^\d+$/).required()
+            }
+            let errors = await joiHelper.joiValidation(req.body, schema);
+            if (errors) {
+                return response.validationError('invalid request', res, errors[0])
+            }
+            next();
+        } catch (err) {
+            console.error('Validation Error: ', err);
+            return response.exception('Server error occurred', res);
+        }
+    }
+
+    /**
+     * Validates password reset request
+     * Checks user ID and new password requirements
+     */
+    async resetPassword(req, res, next) {
+        console.log('UserValidator@resetPassword');
+        try {
+            let schema = {
+                user_id: joi.number().required().min(1),
+                password: joi.string().required().min(8).pattern(new RegExp('^(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$')).required().messages({
+                    'string.empty': 'Password is required.',
+                    'string.min': 'Password must be at least 8 characters long.',
+                    'string.pattern.base': 'Password must contain at least one uppercase letter, one number, and one special character.',
+                }),
+            }
+            let errors = await joiHelper.joiValidation(req.body, schema);
+            if (errors) {
+                return response.validationError('invalid request', res, errors[0])
+            }
+            next();
+        } catch (err) {
+            console.error('Validation Error: ', err);
+            return response.exception('Server error occurred', res);
+        }
+    }
 
     /**
      * Validates get all users request with filters

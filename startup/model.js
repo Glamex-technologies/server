@@ -16,6 +16,7 @@ const ServiceProviderAvailability = require("../application/models/serviceProvid
 const User = require("../application/models/user.model");
 const ServiceList = require("../application/models/serviceList.model");
 const Gallery = require("../application/models/gallery.model");
+const OtpVerification = require("../application/models/otpVerification.model");
 
 const models = {
   Token: Token(sequelize, Sequelize.DataTypes),
@@ -32,6 +33,7 @@ const models = {
   User: User(sequelize, Sequelize.DataTypes),
   ServiceList: ServiceList(sequelize, Sequelize.DataTypes),
   Gallery: Gallery(sequelize, Sequelize.DataTypes),
+  OtpVerification: OtpVerification(sequelize, Sequelize.DataTypes),
 };
 
 Object.values(models)

@@ -46,14 +46,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: 0
     },
-    verification_otp: {
-      type: DataTypes.STRING,
-      allowNull: true
-    },
-    verification_otp_created_at: {
-      type: DataTypes.DATE,
-      allowNull: true
-    },
+
     is_verified: {
       type: DataTypes.TINYINT,
       allowNull: false,
