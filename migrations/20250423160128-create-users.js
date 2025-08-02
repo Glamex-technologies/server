@@ -102,16 +102,7 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: true,
       },
-      favourites: {
-        type: Sequelize.INTEGER,
-        allowNull: true,
-        references: {
-          model: "service_providers",
-          key: "id",
-        },
-        onUpdate: "CASCADE",
-        onDelete: "SET NULL",
-      },
+      
 
       latitude: {
         type: Sequelize.DECIMAL(10, 7),

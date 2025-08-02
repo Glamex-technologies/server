@@ -125,6 +125,13 @@ module.exports = (sequelize, DataTypes) => {
       timestamps: true,
       paranoid: true, // For soft deletes using `deleted_at`
       underscored: true, // Maps camelCase fields to snake_case columns
+      indexes: [
+        {
+          unique: true,
+          fields: ['phone_code', 'phone_number'],
+          name: 'unique_phone_number_constraint'
+        }
+      ]
     }
   );
 
@@ -137,6 +144,11 @@ module.exports = (sequelize, DataTypes) => {
     User.belongsTo(models.City, {
       foreignKey: "city_id",
       as: "city",
+    });
+
+    User.hasOne(models.ServiceProvider, {
+      foreignKey: "user_id",
+      as: "serviceProvider",
     });
   };
 

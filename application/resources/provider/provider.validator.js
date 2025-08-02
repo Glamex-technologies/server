@@ -37,14 +37,28 @@ module.exports = class ProviderValidator {
                 return response.validationError('invalid request', res, errors[0])
             }
             
-            // Check if provider exists
-            let provider = await providerResources.getAllDetails({phone_code: req.body.phone_code, phone_number: req.body.phone_number});
-            if (!provider) {
+            // Check if user exists (providers are now linked to users)
+            const db = require('../../../startup/model');
+            let user = await db.models.User.findOne({
+                where: {
+                    phone_code: req.body.phone_code, 
+                    phone_number: req.body.phone_number
+                }
+            });
+            if (!user) {
                 return response.validationError('Provider not found', res, false);
             }
             
-            // Validate password
-            let isPasswordValid = await joiHelper.validatePassword(req.body.password, provider.password);
+            // Check if user has a provider profile
+            let provider = await db.models.ServiceProvider.findOne({
+                where: { user_id: user.id }
+            });
+            if (!provider) {
+                return response.validationError('Provider profile not found', res, false);
+            }
+            
+            // Validate password against user
+            let isPasswordValid = await joiHelper.validatePassword(req.body.password, user.password);
             if (!isPasswordValid) {
                 return response.validationError("Invalid password", res, false);
             }
@@ -59,8 +73,9 @@ module.exports = class ProviderValidator {
                 return response.validationError("Your account is not active", res, false);
             }
             
-            // Attach provider to request object and proceed
+            // Attach provider with user information to request object
             req.provider = provider;
+            req.user = user; // Also attach user for easy access
             next();
         } catch (err) {
             console.error('Validation Error: ', err);
@@ -91,6 +106,8 @@ module.exports = class ProviderValidator {
                 }),
                 gender: joi.number().valid(1, 2, 3).required(),
                 terms_and_condition: joi.number().valid(1).required(),
+                country_id: joi.number().min(1).optional(),
+                city_id: joi.number().min(1).optional(),
             }
     
             // Validate request body against schema
@@ -99,10 +116,31 @@ module.exports = class ProviderValidator {
                 return response.validationError('invalid request', res, errors[0])
             }
             
-            // Check if phone number already exists
-            let provider = await providerResources.findOne({phone_code: req.body.phone_code, phone_number: req.body.phone_number});
-            if (provider && provider.verified_at) {
-                return response.badRequest('Phone number already exists.', res);
+            // Check if phone number already exists in users table (since providers are now linked to users)
+            const db = require('../../../startup/model');
+            let existingUser = await db.models.User.findOne({
+                where: {
+                    phone_code: req.body.phone_code, 
+                    phone_number: req.body.phone_number
+                }
+            });
+            
+            if (existingUser) {
+                if (existingUser.verified_at) {
+                    return response.badRequest('Phone number already exists and is verified. Please use the login endpoint.', res);
+                } else {
+                    return response.badRequest('Phone number already exists but not verified. Please complete verification or use resend OTP.', res);
+                }
+            }
+            
+            // Check if email already exists
+            if (req.body.email) {
+                let existingEmailUser = await db.models.User.findOne({
+                    where: { email: req.body.email }
+                });
+                if (existingEmailUser) {
+                    return response.badRequest('Email address already exists.', res);
+                }
             }
             
             next();
@@ -333,10 +371,24 @@ module.exports = class ProviderValidator {
                 return response.validationError('invalid request', res, errors[0])
             }
             
-            // Check if provider exists
-            let provider = await providerResources.findOne({phone_code: req.body.phone_code, phone_number: req.body.phone_number});
-            if (!provider) {
+            // Check if user exists (providers are now linked to users)
+            const db = require('../../../startup/model');
+            let user = await db.models.User.findOne({
+                where: {
+                    phone_code: req.body.phone_code, 
+                    phone_number: req.body.phone_number
+                }
+            });
+            if (!user) {
                 return response.validationError('Provider not found', res, false);
+            }
+            
+            // Check if user has a provider profile
+            let provider = await db.models.ServiceProvider.findOne({
+                where: { user_id: user.id }
+            });
+            if (!provider) {
+                return response.validationError('Provider profile not found', res, false);
             }
             
             next();
