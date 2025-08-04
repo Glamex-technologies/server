@@ -63,15 +63,81 @@ module.exports = class ProviderValidator {
                 return response.validationError("Invalid password", res, false);
             }
             
-            // Check if profile is verified by admin
-            if (provider.step_completed == 6 && provider.admin_verified != 1) {
-                return response.validationError('Wait for the admin to verify your profile', res, null);
+            // FIRST CHECK: Is the user verified? If not, generate new OTP and prompt for verification
+            if (!user.verified_at || user.is_verified !== 1) {
+                console.log(`🔍 Provider ${provider.id}: User not verified, generating new OTP`);
+                
+                try {
+                    // Generate new OTP for the provider
+                    const db = require('../../../startup/model');
+                    
+                    // First, invalidate any existing OTPs for this provider
+                    await db.models.OtpVerification.update(
+                        { is_verified: true }, // Mark as used/expired
+                        {
+                            where: {
+                                entity_type: "provider",
+                                entity_id: provider.id,
+                                purpose: "registration",
+                                is_verified: false,
+                            },
+                        }
+                    );
+
+                    // Generate new OTP
+                    const otp = "1111"; // Hardcoded for testing
+                    const expiresAt = new Date(Date.now() + 5 * 60000); // 5 minutes from now
+
+                    const otpRecord = await db.models.OtpVerification.create({
+                        entity_type: "provider",
+                        entity_id: provider.id,
+                        phone_number: user.phone_code + user.phone_number,
+                        purpose: "registration",
+                        otp_code: otp,
+                        expires_at: expiresAt,
+                    });
+                    
+                    console.log("New OTP generated for unverified user:", {
+                        otp_code: otpRecord.otp_code,
+                        expires_at: otpRecord.expires_at,
+                    });
+                    
+                    return response.validationError('Please verify your account with OTP first', res, {
+                        otp_verification_required: true,
+                        message: 'A new OTP has been sent to your phone number. Please verify your account.',
+                        provider_id: provider.id
+                    });
+                } catch (error) {
+                    console.error("Error generating OTP for unverified user:", error);
+                    return response.validationError('Please verify your account with OTP first', res, {
+                        otp_verification_required: true,
+                        message: 'Your account needs to be verified. Please check your phone for OTP or use resend OTP.',
+                        provider_id: provider.id
+                    });
+                }
             }
             
-            // Check if account is active
-            if (provider.status !== 1) {
-                return response.validationError("Your account is not active", res, false);
+            // SECOND CHECK: If verified, then check profile completion status
+            if (provider.step_completed < 6) {
+                console.log(`🔍 Provider ${provider.id}: Step ${provider.step_completed}/6 incomplete`);
+                return response.validationError('Please complete your profile setup first', res, {
+                    setup_required: true,
+                    current_step: provider.step_completed,
+                    total_steps: 6,
+                    message: `Complete all ${6 - provider.step_completed} remaining steps to access the app`
+                });
             }
+            
+            // THIRD CHECK: Check if profile is approved by admin (only if steps are completed)
+            if (provider.step_completed === 6 && provider.is_approved !== 1) {
+                console.log(`🔍 Provider ${provider.id}: Steps complete but not approved by admin`);
+                return response.validationError('Wait for the admin to verify your profile', res, {
+                    approval_required: true,
+                    message: 'Your profile is complete and under review by admin. You will be notified once approved.'
+                });
+            }
+            
+            console.log(`✅ Provider ${provider.id}: All checks passed - ready for login`);
             
             // Attach provider with user information to request object
             req.provider = provider;

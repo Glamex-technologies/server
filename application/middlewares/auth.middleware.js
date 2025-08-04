@@ -52,11 +52,18 @@ const providerAuth = async (req, res, next) => {
     if (!provider) {
       return response.forbidden('Authentication failed', res, null);
     }
-    const serviceList = await providerResource.findServiceList({ service_provider_id: provider.id, deleted_at: null });
-    if(provider?.step_completed == 6 && provider.admin_verified != 1 && serviceList) {
+    // Check profile completion status first
+    if (provider.step_completed < 6) {
+      return response.forbidden('Please complete your profile setup first', res, null);
+    }
+    
+    // Check if profile is approved by admin (only if steps are completed)
+    if (provider.step_completed === 6 && provider.is_approved !== 1) {
       return response.forbidden('Wait for the admin to verify your profile', res, null);
     }
-    if (provider.status != 1) {
+    
+    // Check if account is active (should be 1 by default for registered providers)
+    if (provider.status !== 1) {
       return response.forbidden('Your account is not active', res);
     }
     // Attach to request

@@ -71,6 +71,7 @@ module.exports = class ProviderController {
         provider_type: "individual", // Default
         step_completed: 0,
         is_approved: 0,
+        status: 1, 
         is_available: 1,
         notification: 1,
       };
@@ -168,9 +169,10 @@ module.exports = class ProviderController {
         is_verified: 1,
       });
 
-      // Update provider step completion
+      // Update provider step completion (keep status active)
       await serviceProvider.update({
-        step_completed: 1,
+        step_completed: 0,
+        status: 1, // Ensure status remains active after verification
       });
 
       const serviceProviderObj = {
@@ -332,42 +334,29 @@ module.exports = class ProviderController {
       const serviceProvider = req.provider;
       const user = req.user; // User information from validator
 
-      if (!user.verified_at) {
-        try {
-          const otpRecord = await OtpVerification.createForEntity(
-            "provider",
-            serviceProvider.id,
-            user.phone_code + user.phone_number,
-            "login"
-          );
-          console.log("Provider login OTP created:", {
-            otp_code: otpRecord.otp_code,
-            expires_at: otpRecord.expires_at,
-          });
-        } catch (error) {
-          console.error("Error creating provider login OTP:", error);
-        }
-
-        const result = {
-          id: serviceProvider.id,
-          user_id: user.id,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          full_name: user.full_name,
-          email: user.email,
-          phone_code: user.phone_code,
-          phone_number: user.phone_number,
-          step_completed: serviceProvider.step_completed,
-          verified_at: user.verified_at,
-        };
-
-        return response.success(
-          "An OTP has been sent to your registered phone number for verification",
-          res,
-          result
-        );
+      // Since the validator now handles verification check, 
+      // if we reach here, the user is verified
+      // Now we need to check profile completion status
+      if (serviceProvider.step_completed < 6) {
+        console.log(`🔍 Provider ${serviceProvider.id}: Step ${serviceProvider.step_completed}/6 incomplete`);
+        return response.validationError('Please complete your profile setup first', res, {
+          setup_required: true,
+          current_step: serviceProvider.step_completed,
+          total_steps: 6,
+          message: `Complete all ${6 - serviceProvider.step_completed} remaining steps to access the app`
+        });
       }
 
+      // Check if profile is approved by admin (only if steps are completed)
+      if (serviceProvider.step_completed === 6 && serviceProvider.is_approved !== 1) {
+        console.log(`🔍 Provider ${serviceProvider.id}: Steps complete but not approved by admin`);
+        return response.validationError('Wait for the admin to verify your profile', res, {
+          approval_required: true,
+          message: 'Your profile is complete and under review by admin. You will be notified once approved.'
+        });
+      }
+
+      // All checks passed - generate token and login
       const serviceProviderObj = {
         id: serviceProvider.id,
         user_id: user.id,
@@ -400,6 +389,8 @@ module.exports = class ProviderController {
           city_id: serviceProvider.city_id,
           step_completed: serviceProvider.step_completed,
           verified_at: user.verified_at,
+          is_approved: serviceProvider.is_approved,
+          status: serviceProvider.status,
         },
       };
 
@@ -1002,116 +993,7 @@ module.exports = class ProviderController {
     );
   }
 
-  /**
-   * Authenticate provider and generate access token
-   */
-  async authenticate(req, res) {
-    try {
-      console.log("ProviderController@authenticate");
-      const serviceProvider = req.provider;
 
-      if (!serviceProvider.verified_at) {
-        // Create OTP for login verification using new system
-        try {
-          const otpRecord = await OtpVerification.createForEntity(
-            "provider",
-            serviceProvider.id,
-            serviceProvider.phone_code + serviceProvider.phone_number,
-            "login"
-          );
-          console.log("Provider login OTP created:", {
-            otp_code: otpRecord.otp_code,
-            expires_at: otpRecord.expires_at,
-          });
-        } catch (error) {
-          console.error("Error creating provider login OTP:", error);
-        }
-
-        const result = {
-          id: serviceProvider.id,
-          first_name: serviceProvider.first_name,
-          last_name: serviceProvider.last_name,
-          full_name: serviceProvider.full_name,
-          email: serviceProvider.email,
-          phone_code: serviceProvider.phone_code,
-          phone_number: serviceProvider.phone_number,
-          step_completed: serviceProvider.step_completed,
-          verified_at: serviceProvider.verified_at,
-        };
-
-        return response.success(
-          "An OTP has been sent to your registered phone number for verification",
-          res,
-          result
-        );
-      }
-
-      const serviceProviderObj = {
-        id: serviceProvider.id,
-        phone_code: serviceProvider.phone_code,
-        phone_number: serviceProvider.phone_number,
-        provider_type: serviceProvider.provider_type,
-        step_completed: serviceProvider.step_completed,
-        userType: "provider",
-      };
-
-      const accessToken = await genrateToken(serviceProviderObj);
-      const result = {
-        access_token: accessToken,
-        service_provider: {
-          id: serviceProvider.id,
-          first_name: serviceProvider.first_name,
-          last_name: serviceProvider.last_name,
-          full_name: serviceProvider.full_name,
-          email: serviceProvider.email,
-          phone_code: serviceProvider.phone_code,
-          phone_number: serviceProvider.phone_number,
-          provider_type: serviceProvider.provider_type,
-          salon_name: serviceProvider.salon_name,
-          city_id: serviceProvider.city_id,
-          banner_image: serviceProvider.banner_image,
-          description: serviceProvider.description,
-          step_completed: serviceProvider.step_completed,
-          verified_at: serviceProvider.verified_at,
-          admin_verified: serviceProvider.admin_verified,
-          status: serviceProvider.status,
-          serviceProviderDetail: serviceProvider.serviceProviderDetail
-            ? {
-                id: serviceProvider.serviceProviderDetail.id,
-                national_id: serviceProvider.serviceProviderDetail.national_id,
-                bank_account_name:
-                  serviceProvider.serviceProviderDetail.bank_account_name,
-                bank_name: serviceProvider.serviceProviderDetail.bank_name,
-                account_number:
-                  serviceProvider.serviceProviderDetail.account_number,
-                freelance_certificate:
-                  serviceProvider.serviceProviderDetail.freelance_certificate,
-                commertial_certificate: serviceProvider.commertial_certificate,
-              }
-            : null,
-          serviceProviderAvailability: serviceProvider
-            .serviceProviderAvailability.length
-            ? serviceProvider.serviceProviderAvailability.map(
-                (availability) => {
-                  return {
-                    id: availability.id,
-                    day: availability.day,
-                    from_time: availability.from_time,
-                    to_time: availability.to_time,
-                    available: availability.available,
-                  };
-                }
-              )
-            : null,
-        },
-      };
-
-      return response.success("Login successful", res, result);
-    } catch (error) {
-      console.error("Authentication error:", error);
-      return response.exception("An error occurred during authentication", res);
-    }
-  }
 
   /**
    * Verify OTP for password reset
