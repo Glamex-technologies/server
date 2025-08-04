@@ -589,7 +589,7 @@ module.exports = class ProviderController {
 
           uploadPromises.push(uploadPromise);
         }
-      }
+      } 
 
       await Promise.all(uploadPromises);
 
