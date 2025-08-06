@@ -46,7 +46,7 @@ module.exports = class ProviderController {
     const hashedPassword = bcrypt.hashSync(data.password, 10);
 
     try {
-      // Step 1: Create user with user_type: 'provider'
+      // Step 1: Create user with user_type: 'provider' (NO ServiceProvider yet)
       const userData = {
         first_name: data.first_name,
         last_name: data.last_name,
@@ -66,36 +66,23 @@ module.exports = class ProviderController {
 
       const user = await User.create(userData);
 
-      // Step 2: Create service provider profile linked to the user
-      const serviceProviderData = {
-        user_id: user.id,
-        provider_type: "individual", // Default
-        step_completed: 0,
-        is_approved: 0,
-        is_available: 1,
-        notification: 1,
-      };
-
-      const provider = await ServiceProvider.create(serviceProviderData);
-
-      // Step 3: Create OTP using the new system
+      // Step 2: Create OTP using the user's phone number (not provider ID)
       try {
         const otpRecord = await OtpVerification.createForEntity(
-          "provider",
-          provider.id,
+          "user",
+          user.id,
           data.phone_code + data.phone_number,
           "registration"
         );
-        console.log("Provider OTP created:", {
+        console.log("Provider User OTP created:", {
           otp_code: otpRecord.otp_code,
           expires_at: otpRecord.expires_at,
         });
       } catch (error) {
-        console.error("Error creating provider OTP:", error);
+        console.error("Error creating provider user OTP:", error);
       }
 
       const result = {
-        id: provider.id,
         user_id: user.id,
         first_name: user.first_name,
         last_name: user.last_name,
@@ -103,7 +90,6 @@ module.exports = class ProviderController {
         email: user.email,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
-        step_completed: provider.step_completed,
         gender: user.gender,
         verified_at: user.verified_at,
       };
@@ -127,34 +113,16 @@ module.exports = class ProviderController {
     const data = req.body;
 
     try {
-      // Find service provider and associated user
-      const serviceProvider = await ServiceProvider.findByPk(data.provider_id, {
-        include: [
-          {
-            model: User,
-            as: "user",
-            attributes: [
-              "id",
-              "first_name",
-              "last_name",
-              "full_name",
-              "email",
-              "phone_code",
-              "phone_number",
-              "verified_at",
-              "is_verified",
-            ],
-          },
-        ],
-      });
+      // Find user by user_id (no ServiceProvider exists yet)
+      const user = await User.findByPk(data.user_id);
 
-      if (!serviceProvider) {
-        return response.badRequest("Provider account not found", res, false);
+      if (!user || user.user_type !== "provider") {
+        return response.badRequest("Provider user account not found", res, false);
       }
 
       const verificationResult = await OtpVerification.verifyForEntity(
-        "provider",
-        serviceProvider.id,
+        "user",
+        user.id,
         String(data.otp),
         "registration"
       );
@@ -164,46 +132,38 @@ module.exports = class ProviderController {
       }
 
       // Update user verification status and ensure user is active
-      await serviceProvider.user.update({
+      await user.update({
         verified_at: new Date(),
         is_verified: 1,
         status: 1, // Ensure user account is active
       });
 
-      // Update provider step completion
-      await serviceProvider.update({
-        step_completed: 0,
-      });
-
-      const serviceProviderObj = {
-        id: serviceProvider.id,
-        user_id: serviceProvider.user.id,
-        first_name: serviceProvider.user.first_name,
-        last_name: serviceProvider.user.last_name,
-        full_name: serviceProvider.user.full_name,
-        email: serviceProvider.user.email,
-        phone_code: serviceProvider.user.phone_code, 
-        phone_number: serviceProvider.user.phone_number,
-        step_completed: serviceProvider.step_completed,
-        verified_at: serviceProvider.user.verified_at,
+      const userObj = {
+        user_id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        email: user.email,
+        phone_code: user.phone_code, 
+        phone_number: user.phone_number,
+        verified_at: user.verified_at,
       };
 
+      // Generate token for user (no provider profile yet)
       const accessToken = await genrateToken({
-        id: serviceProvider.id,
-        user_id: serviceProvider.user.id,
-        phone_code: serviceProvider.user.phone_code,
-        phone_number: serviceProvider.user.phone_number,
-        provider_type: serviceProvider.provider_type,
-        step_completed: serviceProvider.step_completed,
+        user_id: user.id,
+        phone_code: user.phone_code,
+        phone_number: user.phone_number,
         userType: "provider",
       });
+      
       const result = {
         access_token: accessToken,
-        service_provider: serviceProviderObj,
+        user: userObj,
       };
 
       return response.success(
-        "Account verification successful. You can now complete your profile setup.",
+        "Account verification successful. You can now create your provider profile.",
         res,
         result
       );
@@ -221,35 +181,21 @@ module.exports = class ProviderController {
     const data = req.query;
 
     try {
-      // Find service provider and associated user
-      const serviceProvider = await ServiceProvider.findByPk(data.provider_id, {
-        include: [
-          {
-            model: User,
-            as: "user",
-            attributes: [
-              "id",
-              "first_name",
-              "last_name",
-              "phone_code",
-              "phone_number",
-            ],
-          },
-        ],
-      });
+      // Find user by user_id (no ServiceProvider exists yet)
+      const user = await User.findByPk(data.user_id);
 
-      if (!serviceProvider) {
-        return response.badRequest("Provider account not found", res, false);
+      if (!user || user.user_type !== "provider") {
+        return response.badRequest("Provider user account not found", res, false);
       }
 
       try {
         const otpRecord = await OtpVerification.createForEntity(
-          "provider",
-          serviceProvider.id,
-          serviceProvider.user.phone_code + serviceProvider.user.phone_number,
+          "user",
+          user.id,
+          user.phone_code + user.phone_number,
           "registration"
         );
-        console.log("Provider resend OTP created:", {
+        console.log("Provider user resend OTP created:", {
           otp_code: otpRecord.otp_code,
           expires_at: otpRecord.expires_at,
         });
@@ -259,12 +205,11 @@ module.exports = class ProviderController {
       }
 
       const result = {
-        id: serviceProvider.id,
-        first_name: serviceProvider.user.first_name,
-        last_name: serviceProvider.user.last_name,
-        phone_code: serviceProvider.user.phone_code,
-        phone_number: serviceProvider.user.phone_number,
-        step_completed: serviceProvider.step_completed,
+        user_id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        phone_code: user.phone_code,
+        phone_number: user.phone_number,
       };
 
       return response.success(
@@ -284,21 +229,21 @@ module.exports = class ProviderController {
   async createProviderProfile(req, res) {
     console.log("ProviderController@createProviderProfile");
     const data = req.body;
-    const provider = req.provider; // From provider auth middleware
-    const user = req.user; // From provider auth middleware
+    const userId = req.user.id; // From auth middleware (only user exists, no provider yet)
 
     try {
-      // Check if provider already has a profile (should not happen, but safety check)
-      if (provider.step_completed > 0) {
-        return response.error(
-          res,
-          "Provider profile already exists",
-          409
-        );
+      // Check if user already has a provider profile
+      const existingProvider = await ServiceProvider.findOne({
+        where: { user_id: userId },
+      });
+
+      if (existingProvider) {
+        return response.conflict("Provider profile already exists for this user", res);
       }
 
-      // Update existing provider profile with additional details
+      // Create new provider profile
       const providerData = {
+        user_id: userId,
         provider_type: data.provider_type || "individual",
         salon_name: data.salon_name || null,
         description: data.description || null,
@@ -313,13 +258,10 @@ module.exports = class ProviderController {
         is_available: 1,
       };
 
-      await provider.update(providerData);
-
-      // Fetch updated provider
-      const updatedProvider = await ServiceProvider.findByPk(provider.id);
+      const provider = await ServiceProvider.create(providerData);
 
       return response.success("Provider profile created successfully", res, {
-        provider: updatedProvider,
+        provider: provider,
         next_step: "document_upload",
       });
     } catch (error) {
@@ -342,6 +284,14 @@ module.exports = class ProviderController {
         return response.validationError('Please verify your account first', res, {
           verification_required: true,
           message: 'Your account needs to be verified before you can login'
+        });
+      }
+
+      // Check if provider profile exists
+      if (!serviceProvider) {
+        return response.validationError('Please create your provider profile first', res, {
+          profile_required: true,
+          message: 'You need to create your provider profile before you can access the app'
         });
       }
 

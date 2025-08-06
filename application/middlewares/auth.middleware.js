@@ -72,17 +72,6 @@ const providerAuth = async (req, res, next) => {
       return response.forbidden("Authentication failed", res, null);
     }
 
-    // Find service provider linked to the user
-    console.log("🔍 Finding provider for user ID:", user.id);
-    const provider = await providerResource.findOne({ user_id: user.id });
-    console.log("Provider found:", provider ? "YES" : "NO");
-    console.log("Provider step_completed:", provider?.step_completed);
-    
-    if (!provider) {
-      console.log("❌ Provider profile not found");
-      return response.forbidden("Provider profile not found", res, null);
-    }
-
     // Check if user account is active
     console.log("🔍 Checking user status:", user.status);
     if (user.status !== 1) {
@@ -90,10 +79,16 @@ const providerAuth = async (req, res, next) => {
       return response.forbidden("Your account is not active", res);
     }
 
-    // Attach both user and provider to request
-    console.log("✅ Provider authenticated successfully, attaching to request");
+    // Find service provider linked to the user (optional - may not exist yet)
+    console.log("🔍 Finding provider for user ID:", user.id);
+    const provider = await providerResource.findOne({ user_id: user.id });
+    console.log("Provider found:", provider ? "YES" : "NO");
+    console.log("Provider step_completed:", provider?.step_completed);
+
+    // Attach user to request (provider may be null if profile not created yet)
+    console.log("✅ Provider user authenticated successfully, attaching to request");
     req.user = user;
-    req.provider = provider;
+    req.provider = provider; // This can be null for create-profile route
     next();
   } catch (error) {
     console.error("❌ Provider Auth Middleware Error:", error.message);
