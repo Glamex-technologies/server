@@ -47,10 +47,10 @@ module.exports = class UserController {
     // Create OTP using the new system
     try {
       const otpRecord = await OtpVerification.createForEntity(
-        'user',
+        "user",
         user.id,
         data.phone_code + data.phone_number,
-        'registration'
+        "registration"
       );
       console.log("OTP created:", {
         otp_code: otpRecord.otp_code,
@@ -88,14 +88,17 @@ module.exports = class UserController {
         return response.badRequest("User not found", res, false);
       }
 
-      console.log("User found:", { id: user.id, is_verified: user.is_verified });
+      console.log("User found:", {
+        id: user.id,
+        is_verified: user.is_verified,
+      });
 
       // Verify OTP using the new system
       const verificationResult = await OtpVerification.verifyForEntity(
-        'user',
+        "user",
         user.id,
         String(data.otp),
-        'registration'
+        "registration"
       );
 
       if (!verificationResult.success) {
@@ -151,14 +154,14 @@ module.exports = class UserController {
     if (!user) {
       return response.badRequest("User not found", res, false);
     }
-    
+
     // Create new OTP using the new system
     try {
       const otpRecord = await OtpVerification.createForEntity(
-        'user',
+        "user",
         user.id,
         user.phone_code + user.phone_number,
-        'registration'
+        "registration"
       );
       console.log("New OTP created:", {
         otp_code: otpRecord.otp_code,
@@ -189,10 +192,10 @@ module.exports = class UserController {
       // If not verified, send OTP using new system
       try {
         const otpRecord = await OtpVerification.createForEntity(
-          'user',
+          "user",
           user.id,
           user.phone_code + user.phone_number,
-          'login'
+          "login"
         );
         console.log("Login OTP created:", {
           otp_code: otpRecord.otp_code,
@@ -222,11 +225,18 @@ module.exports = class UserController {
     // If verified, generate token
     const userObj = {
       id: user.id,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      full_name: user.full_name,
+      user_type: user.user_type,
+      email: user.email,
       phone_code: user.phone_code,
       phone_number: user.phone_number,
-      user_type: user.user_type,
+      country_id: user.country_id,
+      city_id: user.city_id,
+      is_verified: user.is_verified,
     };
-    const accessToken = await genrateToken(userObj);
+    const accessToken = await genrateToken({ ...userObj, userType: "user" });
     const result = {
       access_token: accessToken,
       user: {
@@ -256,14 +266,14 @@ module.exports = class UserController {
     if (!user) {
       return response.badRequest("User not found", res, false);
     }
-    
+
     // Create OTP for password reset using new system
     try {
       const otpRecord = await OtpVerification.createForEntity(
-        'user',
+        "user",
         user.id,
         data.phone_code + data.phone_number,
-        'password_reset'
+        "password_reset"
       );
       console.log("Password reset OTP created:", {
         otp_code: otpRecord.otp_code,
@@ -291,10 +301,10 @@ module.exports = class UserController {
     }
     // Verify OTP using the new system
     const verificationResult = await OtpVerification.verifyForEntity(
-      'user',
+      "user",
       user.id,
       String(data.otp),
-      'password_reset'
+      "password_reset"
     );
 
     if (!verificationResult.success) {
@@ -354,7 +364,7 @@ module.exports = class UserController {
       "first_name",
       "last_name",
       "full_name",
-      "type",      
+      "type",
       "phone_code",
       "status",
       "profile_image",

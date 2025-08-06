@@ -61,6 +61,7 @@ module.exports = class ProviderController {
         country_id: data.country_id || 1, // Default to first country if not provided
         city_id: data.city_id || 1, // Default to first city if not provided
         is_verified: 0,
+        status: 1, // User account is active by default
       };
 
       const user = await User.create(userData);
@@ -71,7 +72,6 @@ module.exports = class ProviderController {
         provider_type: "individual", // Default
         step_completed: 0,
         is_approved: 0,
-        status: 1, 
         is_available: 1,
         notification: 1,
       };
@@ -115,7 +115,7 @@ module.exports = class ProviderController {
       );
     } catch (error) {
       console.error("Error in provider registration:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
@@ -163,16 +163,16 @@ module.exports = class ProviderController {
         return response.badRequest(verificationResult.message, res, false);
       }
 
-      // Update user verification status
+      // Update user verification status and ensure user is active
       await serviceProvider.user.update({
         verified_at: new Date(),
         is_verified: 1,
+        status: 1, // Ensure user account is active
       });
 
-      // Update provider step completion (keep status active)
+      // Update provider step completion
       await serviceProvider.update({
         step_completed: 0,
-        status: 1, // Ensure status remains active after verification
       });
 
       const serviceProviderObj = {
@@ -182,14 +182,19 @@ module.exports = class ProviderController {
         last_name: serviceProvider.user.last_name,
         full_name: serviceProvider.user.full_name,
         email: serviceProvider.user.email,
-        phone_code: serviceProvider.user.phone_code,
+        phone_code: serviceProvider.user.phone_code, 
         phone_number: serviceProvider.user.phone_number,
         step_completed: serviceProvider.step_completed,
         verified_at: serviceProvider.user.verified_at,
       };
 
       const accessToken = await genrateToken({
-        ...serviceProviderObj,
+        id: serviceProvider.id,
+        user_id: serviceProvider.user.id,
+        phone_code: serviceProvider.user.phone_code,
+        phone_number: serviceProvider.user.phone_number,
+        provider_type: serviceProvider.provider_type,
+        step_completed: serviceProvider.step_completed,
         userType: "provider",
       });
       const result = {
@@ -204,7 +209,7 @@ module.exports = class ProviderController {
       );
     } catch (error) {
       console.error("Error in OTP verification:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
@@ -269,36 +274,31 @@ module.exports = class ProviderController {
       );
     } catch (error) {
       console.error("Error in resending OTP:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
   /**
-   * Create provider profile linked to a user
-   * This replaces the old register function
+   * Create provider profile for authenticated provider
    */
   async createProviderProfile(req, res) {
     console.log("ProviderController@createProviderProfile");
     const data = req.body;
-    const userId = req.user.id; // From auth middleware
+    const provider = req.provider; // From provider auth middleware
+    const user = req.user; // From provider auth middleware
 
     try {
-      // Check if user already has a provider profile
-      const existingProvider = await ServiceProvider.findOne({
-        where: { user_id: userId },
-      });
-
-      if (existingProvider) {
+      // Check if provider already has a profile (should not happen, but safety check)
+      if (provider.step_completed > 0) {
         return response.error(
           res,
-          "Provider profile already exists for this user",
+          "Provider profile already exists",
           409
         );
       }
 
-      // Create provider profile
+      // Update existing provider profile with additional details
       const providerData = {
-        user_id: userId,
         provider_type: data.provider_type || "individual",
         salon_name: data.salon_name || null,
         description: data.description || null,
@@ -307,21 +307,24 @@ module.exports = class ProviderController {
         longitude: data.longitude || null,
         country_id: data.country_id || null,
         city_id: data.city_id || null,
-        banner_image: data.banner_image || null, // Predefined or custom
+        banner_image: data.banner_image || null,
         step_completed: 1,
         is_approved: 0,
         is_available: 1,
       };
 
-      const provider = await ServiceProvider.create(providerData);
+      await provider.update(providerData);
 
-      return response.success(res, "Provider profile created successfully", {
-        provider: provider,
+      // Fetch updated provider
+      const updatedProvider = await ServiceProvider.findByPk(provider.id);
+
+      return response.success("Provider profile created successfully", res, {
+        provider: updatedProvider,
         next_step: "document_upload",
       });
     } catch (error) {
       console.error("Error creating provider profile:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
@@ -332,11 +335,17 @@ module.exports = class ProviderController {
     try {
       console.log("ProviderController@authenticate");
       const serviceProvider = req.provider;
-      const user = req.user; // User information from validator
+      const user = req.user; // User information from middleware
 
-      // Since the validator now handles verification check, 
-      // if we reach here, the user is verified
-      // Now we need to check profile completion status
+      // Check if user is verified
+      if (!user.is_verified) {
+        return response.validationError('Please verify your account first', res, {
+          verification_required: true,
+          message: 'Your account needs to be verified before you can login'
+        });
+      }
+
+      // Check profile completion status
       if (serviceProvider.step_completed < 6) {
         console.log(`🔍 Provider ${serviceProvider.id}: Step ${serviceProvider.step_completed}/6 incomplete`);
         return response.validationError('Please complete your profile setup first', res, {
@@ -532,18 +541,10 @@ module.exports = class ProviderController {
    */
   async uploadDocuments(req, res) {
     console.log("ProviderController@uploadDocuments");
-    const userId = req.user.id;
+    const provider = req.provider; // From provider auth middleware
     const files = req.files;
 
     try {
-      const provider = await ServiceProvider.findOne({
-        where: { user_id: userId },
-      });
-
-      if (!provider) {
-        return response.error(res, "Provider profile not found", 404);
-      }
-
       const uploadPromises = [];
       const documentUrls = {};
 
@@ -590,13 +591,13 @@ module.exports = class ProviderController {
         step_completed: 2,
       });
 
-      return response.success(res, "Documents uploaded successfully", {
+      return response.success("Documents uploaded successfully", res, {
         provider: await ServiceProvider.findByPk(provider.id),
         next_step: "service_setup",
       });
     } catch (error) {
       console.error("Error uploading documents:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
@@ -637,7 +638,7 @@ module.exports = class ProviderController {
       );
     } catch (error) {
       console.error("Error getting available services:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
@@ -646,21 +647,13 @@ module.exports = class ProviderController {
    */
   async setupServices(req, res) {
     console.log("ProviderController@setupServices");
-    const userId = req.user.id;
+    const provider = req.provider; // From provider auth middleware
     const { services } = req.body;
 
     try {
-      const provider = await ServiceProvider.findOne({
-        where: { user_id: userId },
-      });
-
-      if (!provider) {
-        return response.error(res, "Provider profile not found", 404);
-      }
-
       // Validate that services array is provided
       if (!services || !Array.isArray(services) || services.length === 0) {
-        return response.error(res, "Services array is required", 400);
+        return response.badRequest("Services array is required", res);
       }
 
       // Delete existing service lists for this provider
@@ -691,13 +684,13 @@ module.exports = class ProviderController {
         step_completed: 3,
       });
 
-      return response.success(res, "Services setup successfully", {
+      return response.success("Services setup successfully", res, {
         provider: await ServiceProvider.findByPk(provider.id),
         next_step: "availability_setup",
       });
     } catch (error) {
       console.error("Error setting up services:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
@@ -715,7 +708,7 @@ module.exports = class ProviderController {
       });
 
       if (!provider) {
-        return response.error(res, "Provider profile not found", 404);
+        return response.notFound("Provider profile not found", res);
       }
 
       // Simple subscription tracking:
@@ -739,14 +732,14 @@ module.exports = class ProviderController {
         step_completed: Math.max(provider.step_completed, 6),
       });
 
-      return response.success(res, "Subscription updated successfully", {
+      return response.success("Subscription updated successfully", res, {
         provider: await ServiceProvider.findByPk(provider.id),
         subscription_type: subscription_type,
         expires_at: expiryDate,
       });
     } catch (error) {
       console.error("Error updating subscription:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
@@ -1295,7 +1288,9 @@ module.exports = class ProviderController {
     try {
       const { old_password, new_password } = req.body;
       const provider = req.provider;
-      const isMatch = await bcrypt.compare(old_password, provider.password);
+      const user = req.user;
+      
+      const isMatch = await bcrypt.compare(old_password, user.password);
 
       if (!isMatch) {
         return response.badRequest(
@@ -1305,9 +1300,9 @@ module.exports = class ProviderController {
       }
 
       const hashedNewPassword = await bcrypt.hash(new_password, 10);
-      await providerResources.updateProvider(
+      await userResources.updateUser(
         { password: hashedNewPassword },
-        { id: provider.id }
+        { id: user.id }
       );
 
       return response.success("Password changed successfully", res);
@@ -1327,7 +1322,9 @@ module.exports = class ProviderController {
     try {
       const { password } = req.body;
       const provider = req.provider;
-      const isMatch = await bcrypt.compare(password, provider.password);
+      const user = req.user;
+      
+      const isMatch = await bcrypt.compare(password, user.password);
 
       if (!isMatch) {
         return response.badRequest(
@@ -1336,9 +1333,15 @@ module.exports = class ProviderController {
         );
       }
 
+      // Soft delete both provider and user
       await providerResources.updateProvider(
-        { deleted_at: new Date() },
+        { status: 0 },
         { id: provider.id }
+      );
+      
+      await userResources.updateUser(
+        { status: 0 },
+        { id: user.id }
       );
 
       return response.success(
@@ -1359,18 +1362,10 @@ module.exports = class ProviderController {
    */
   async setBankDetails(req, res) {
     console.log("ProviderController@setBankDetails");
-    const userId = req.user.id;
+    const provider = req.provider; // From provider auth middleware
     const bankData = req.body;
 
     try {
-      const provider = await ServiceProvider.findOne({
-        where: { user_id: userId },
-      });
-
-      if (!provider) {
-        return response.error(res, "Provider profile not found", 404);
-      }
-
       // Create or update bank details
       const [bankDetails, created] = await BankDetails.findOrCreate({
         where: { service_provider_id: provider.id },
@@ -1401,13 +1396,13 @@ module.exports = class ProviderController {
         step_completed: Math.max(provider.step_completed, 5),
       });
 
-      return response.success(res, "Bank details saved successfully", {
+      return response.success("Bank details saved successfully", res, {
         provider: await ServiceProvider.findByPk(provider.id),
         next_step: "subscription",
       });
     } catch (error) {
       console.error("Error setting bank details:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
@@ -1416,41 +1411,34 @@ module.exports = class ProviderController {
    */
   async toggleAvailability(req, res) {
     console.log("ProviderController@toggleAvailability");
-    const userId = req.user.id;
+    const provider = req.provider;
     const { is_available } = req.body;
 
     try {
-      const provider = await ServiceProvider.findOne({
-        where: { user_id: userId },
-      });
-
-      if (!provider) {
-        return response.error(res, "Provider profile not found", 404);
-      }
-
       await provider.update({
         is_available: is_available ? 1 : 0,
       });
 
-      return response.success(res, "Availability status updated successfully", {
+      return response.success("Availability status updated successfully", res, {
         provider: await ServiceProvider.findByPk(provider.id),
       });
     } catch (error) {
       console.error("Error updating availability:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
   /**
-   * Get provider profile with all related data (for user-based providers)
+   * Get provider profile with all related data (for authenticated providers)
    */
   async getProvider(req, res) {
     console.log("ProviderController@getProvider");
-    const userId = req.user.id;
+    const provider = req.provider;
+    const user = req.user;
 
     try {
-      const provider = await ServiceProvider.findOne({
-        where: { user_id: userId },
+      // Get full provider details with all related data
+      const fullProvider = await ServiceProvider.findByPk(provider.id, {
         include: [
           {
             model: User,
@@ -1460,7 +1448,10 @@ module.exports = class ProviderController {
               "first_name",
               "last_name",
               "email",
+              "phone_code",
               "phone_number",
+              "verified_at",
+              "is_verified",
             ],
           },
           {
@@ -1488,36 +1479,28 @@ module.exports = class ProviderController {
         ],
       });
 
-      if (!provider) {
-        return response.error(res, "Provider profile not found", 404);
+      if (!fullProvider) {
+        return response.notFound("Provider profile not found", res);
       }
 
-      return response.success(res, "Provider profile retrieved successfully", {
-        provider: provider,
+      return response.success("Provider profile retrieved successfully", res, {
+        provider: fullProvider,
       });
     } catch (error) {
       console.error("Error getting provider:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
   /**
-   * Update provider profile (for user-based providers)
+   * Update provider profile (for authenticated providers)
    */
   async updateProvider(req, res) {
     console.log("ProviderController@updateProvider");
-    const userId = req.user.id;
+    const provider = req.provider;
     const updateData = req.body;
 
     try {
-      const provider = await ServiceProvider.findOne({
-        where: { user_id: userId },
-      });
-
-      if (!provider) {
-        return response.error(res, "Provider profile not found", 404);
-      }
-
       // Filter allowed update fields including location data
       const allowedFields = [
         "provider_type",
@@ -1542,7 +1525,7 @@ module.exports = class ProviderController {
 
       await provider.update(filteredData);
 
-      return response.success(res, "Provider profile updated successfully", {
+      return response.success("Provider profile updated successfully", res, {
         provider: await ServiceProvider.findByPk(provider.id, {
           include: [
             {
@@ -1565,7 +1548,7 @@ module.exports = class ProviderController {
       });
     } catch (error) {
       console.error("Error updating provider:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 
@@ -1589,12 +1572,12 @@ module.exports = class ProviderController {
         order: [["name", "ASC"]],
       });
 
-      return response.success(res, "Locations retrieved successfully", {
+      return response.success("Locations retrieved successfully", res, {
         countries: countries,
       });
     } catch (error) {
       console.error("Error getting locations:", error);
-      return response.error(res, error.message, 500);
+      return response.exception(error.message, res);
     }
   }
 };

@@ -1,61 +1,62 @@
 require('dotenv').config();
 
 module.exports = class ResponseHelper {
-    async success(msg, res, data) {
-        this.sendResponse(200, msg, res, data);
+    success(msg, res, data) {
+        return this.sendResponse(200, msg, res, data);
     };
 
-    async created(msg, res, data) {
-        this.sendResponse(200, msg, res, data);
+    created(msg, res, data) {
+        return this.sendResponse(200, msg, res, data);
     };
 
-    async disallowed(msg, res, data) {
-        this.sendResponse(400, msg, res, data);
+    disallowed(msg, res, data) {
+        return this.sendResponse(400, msg, res, data);
     };
 
-    async noContent(msg, res, data) {
-        this.sendResponse(200, msg, res, data);
+    noContent(msg, res, data) {
+        return this.sendResponse(200, msg, res, data);
     };
 
-    async redirect(url, res) {
+    redirect(url, res) {
         return res.status(200).send({
             api_ver: process.env.API_VER,
             redirect_to: url,
         });
     };
 
-    async badRequest(msg, res, data) {
-        this.sendResponse(400, msg, res, data);
+    badRequest(msg, res, data) {
+        return this.sendResponse(400, msg, res, data);
     };
 
-    async validationError(msg, res, data) {
-        this.sendResponse(422, msg, res, data);
+    validationError(msg, res, data) {
+        return this.sendResponse(422, msg, res, data);
     };
-    async unauthorized(msg, res, data) {
-        this.sendResponse(401, msg, res, data);
-    };
-
-    async forbidden(msg, res, data) {
-        this.sendResponse(401, msg, res, data);
+    
+    unauthorized(msg, res, data) {
+        return this.sendResponse(401, msg, res, data);
     };
 
-    async notFound(msg, res, data) {
-        this.sendResponse(404, msg, res, data);
+    forbidden(msg, res, data) {
+        return this.sendResponse(401, msg, res, data);
     };
 
-    async exception(msg, res, data) {
-        this.sendResponse(500,msg, res, data);
+    notFound(msg, res, data) {
+        return this.sendResponse(404, msg, res, data);
     };
 
-    async conflict(msg, res, data) {
-        this.sendResponse(400, msg, res, data);
+    exception(msg, res, data) {
+        return this.sendResponse(500, msg, res, data);
     };
 
-    async custom(code, msg, res, data) {
-        this.sendResponse(code, msg, res, data);
+    conflict(msg, res, data) {
+        return this.sendResponse(400, msg, res, data);
+    };
+
+    custom(code, msg, res, data) {
+        return this.sendResponse(code, msg, res, data);
     }
 
-    async twoFactorEnabled(res) {
+    twoFactorEnabled(res) {
         res.setHeader('Access-Control-Allow-Credentials', 'true');
         return res.status(200).send({
             api_ver: process.env.API_VER,
@@ -64,20 +65,20 @@ module.exports = class ResponseHelper {
         });
     };
 
-    async sendResponse(code, msg, res, data) {
+    sendResponse(code, msg, res, data) {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Credentials', 'true');
         res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,PATCH,POST,DELETE,OPTIONS');
+        
         if (!data) {
-            
             return res.status(code).send({
-                statusCode:code,
+                statusCode: code,
                 api_ver: process.env.API_VER,
                 message: msg,
             });
         } else {
             return res.status(code).send({
-                statusCode:code,
+                statusCode: code,
                 api_ver: process.env.API_VER,
                 message: msg,
                 data: data,

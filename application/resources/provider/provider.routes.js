@@ -1,8 +1,12 @@
 const express = require("express");
 const router = express.Router();
-const { providerAuth, adminAuth, userAuth } = require("../../middlewares/auth.middleware");
+const {
+  providerAuth,
+  adminAuth,
+  userAuth,
+} = require("../../middlewares/auth.middleware");
 const { uploadFileToS3 } = require("../../../config/upload.files");
-const multer = require('multer');
+const multer = require("multer");
 const ProviderController = require("./provider.controller");
 const ProviderValidator = require("./provider.validator");
 
@@ -13,59 +17,123 @@ const providerValidator = new ProviderValidator();
 const upload = multer({ storage: multer.memoryStorage() });
 
 // Route for welcome message or basic get
-router.get("/", providerController.getWelcome); 
+router.get("/", providerController.getWelcome);
 
 // Provider authentication routes (original provider system)
-router.post("/register", [providerValidator.register], providerController.register); 
-router.post("/verify-verification-otp", [providerValidator.verifyVerificationOtp], providerController.verifyVerificationOtp); 
-router.get("/resend-otp", [providerValidator.resendOtp], providerController.resendOtp);
-router.post("/authenticate", [providerValidator.authenticate], providerController.authenticate);
-router.post("/forgot-password", [providerValidator.forgotPassword], providerController.forgotPassword);
-router.post("/verify-forgot-password-otp", [providerValidator.verifyForgotPasswordOtp], providerController.verifyForgotPasswordOtp); 
-router.post("/reset-password", [providerValidator.resetPassword], providerController.resetPassword);
+router.post(
+  "/register",
+  [providerValidator.register],
+  providerController.register
+);
+router.post(
+  "/verify-verification-otp",
+  [providerValidator.verifyVerificationOtp],
+  providerController.verifyVerificationOtp
+);
+router.get(
+  "/resend-otp",
+  [providerValidator.resendOtp],
+  providerController.resendOtp
+);
+router.post(
+  "/authenticate",
+  [providerValidator.authenticate],
+  providerController.authenticate
+);
+router.post(
+  "/forgot-password",
+  [providerValidator.forgotPassword],
+  providerController.forgotPassword
+);
+router.post(
+  "/verify-forgot-password-otp",
+  [providerValidator.verifyForgotPasswordOtp],
+  providerController.verifyForgotPasswordOtp
+);
+router.post(
+  "/reset-password",
+  [providerValidator.resetPassword],
+  providerController.resetPassword
+);
 
 // Routes for users to become providers (requires user authentication)
 
 // Create provider profile (users can become providers)
-router.post("/create-profile", [userAuth], providerController.createProviderProfile); 
+router.post(
+  "/create-profile",
+  [providerAuth],
+  providerController.createProviderProfile
+);
 
 // Upload documents with AWS S3
-router.post("/upload-documents", [
-    userAuth, 
+router.post(
+  "/upload-documents",
+  [
+    providerAuth,
     upload.fields([
-        { name: 'national_id_image_url', maxCount: 1 },
-        { name: 'freelance_certificate_image_url', maxCount: 1 },
-        { name: 'commercial_registration_image_url', maxCount: 1 },
-        { name: 'banner_image', maxCount: 1 }
-    ])
-], providerController.uploadDocuments);
+      { name: "national_id_image_url", maxCount: 1 },
+      { name: "freelance_certificate_image_url", maxCount: 1 },
+      { name: "commercial_registration_image_url", maxCount: 1 },
+      { name: "banner_image", maxCount: 1 },
+    ]),
+  ],
+  providerController.uploadDocuments
+);
 
-// Get available services from master catalog  
-router.get("/available-services", [userAuth], providerController.getAvailableServices);
+// Get available services from master catalog
+router.get(
+  "/available-services",
+  [providerAuth],
+  providerController.getAvailableServices
+);
 
 // Get countries and cities for location dropdowns
-router.get("/locations", [userAuth], providerController.getLocations);
+router.get("/locations", [providerAuth], providerController.getLocations);
 
 // Setup services for provider
-router.post("/setup-services", [userAuth], providerController.setupServices);
+router.post("/setup-services", [providerAuth], providerController.setupServices);
 
 // Set availability schedule
-router.post("/set-availability", [userAuth], providerController.setAvailability);
+router.post(
+  "/set-availability",
+  [providerAuth],
+  providerController.setAvailability
+);
 
 // Set bank details
-router.post("/set-bank-details", [userAuth], providerController.setBankDetails);
+router.post("/set-bank-details", [providerAuth], providerController.setBankDetails);
 
 // Set simple subscription (one-time payment)
-router.post("/set-subscription", [userAuth], providerController.setSubscription);
+router.post(
+  "/set-subscription",
+  [providerAuth],
+  providerController.setSubscription
+);
+
+// Routes for authenticated providers (requires provider authentication)
 
 // Toggle availability status
-router.post("/toggle-availability", [userAuth], providerController.toggleAvailability);
+router.post(
+  "/toggle-availability",
+  [providerAuth],
+  providerController.toggleAvailability
+);
 
-// Get provider profile (for authenticated users who are providers)
-router.get("/profile", [userAuth], providerController.getProvider);
+// Get provider profile (for authenticated providers)
+router.get("/profile", [providerAuth], providerController.getProvider);
 
 // Update provider profile
-router.put("/profile", [userAuth], providerController.updateProvider);
+router.put("/profile", [providerAuth], providerController.updateProvider);
+
+// Change password
+router.post(
+  "/change-password",
+  [providerAuth],
+  providerController.changePassword
+);
+
+// Logout
+router.post("/logout", [providerAuth], providerController.logOut);
 
 // Routes below require admin authentication and validation
 
@@ -73,14 +141,26 @@ router.put("/profile", [userAuth], providerController.updateProvider);
 router.get("/get-all", [adminAuth], providerController.getAllProviders);
 
 // Route for admin to perform actions on provider profiles with validation
-router.post('/provider-profile-action/:provider_id', [adminAuth], providerController.providerProfileAction); 
+router.post(
+  "/provider-profile-action/:provider_id",
+  [adminAuth],
+  providerController.providerProfileAction
+);
 
 // Route for admin to get specific provider details with validation
-router.get("/admin/get-provider/:provider_id", [adminAuth], providerController.getProvider);
+router.get(
+  "/admin/get-provider/:provider_id",
+  [adminAuth],
+  providerController.getProvider
+);
 
 // Routes for provider management (authenticated users with provider profiles)
 
 // Route for provider to delete their own account
-router.delete("/delete-my-account", [userAuth], providerController.deleteMyAccount);
+router.delete(
+  "/delete-my-account",
+  [providerAuth],
+  providerController.deleteMyAccount
+);
 
 module.exports = router;
