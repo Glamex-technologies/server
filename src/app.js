@@ -44,7 +44,7 @@ app.get("/", (req, res) => {
 // Error handler middleware
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // Create HTTP server (simplified for development)
 const server = http.createServer(app);
