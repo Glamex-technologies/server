@@ -69,7 +69,7 @@ module.exports = class ProviderController {
       // Step 2: Create OTP using the user's phone number (not provider ID)
       try {
         const otpRecord = await OtpVerification.createForEntity(
-          "user",
+          "provider",
           user.id,
           data.phone_code + data.phone_number,
           "registration"
@@ -121,7 +121,7 @@ module.exports = class ProviderController {
       }
 
       const verificationResult = await OtpVerification.verifyForEntity(
-        "user",
+        "provider",
         user.id,
         String(data.otp),
         "registration"
@@ -190,7 +190,7 @@ module.exports = class ProviderController {
 
       try {
         const otpRecord = await OtpVerification.createForEntity(
-          "user",
+          "provider",
           user.id,
           user.phone_code + user.phone_number,
           "registration"

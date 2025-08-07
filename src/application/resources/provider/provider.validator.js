@@ -227,7 +227,7 @@ module.exports = class ProviderValidator {
         try {
             // Define validation schema for OTP verification
             let schema = {
-                provider_id: joi.number().required().min(1),
+                user_id: joi.number().required().min(1),
                 otp: joi.string().length(4).pattern(/^\d+$/).required()
             }
             
@@ -255,7 +255,7 @@ module.exports = class ProviderValidator {
         try {
             // Define validation schema for OTP resend
             let schema = {
-                provider_id: joi.number().required().min(1)
+                user_id: joi.number().required().min(1)
             }
             
             // Validate request body against schema
@@ -475,7 +475,7 @@ module.exports = class ProviderValidator {
         try {
             // Define validation schema for forgot password OTP verification
             let schema = {
-                provider_id: joi.number().required().min(1),
+                user_id: joi.number().required().min(1),
                 otp: joi.string().length(4).pattern(/^\d+$/).required()
             }
             
@@ -503,7 +503,7 @@ module.exports = class ProviderValidator {
         try {
             // Define validation schema for password reset
             let schema = {
-                provider_id: joi.number().required().min(1),
+                user_id: joi.number().required().min(1),
                 password: joi.string().required().min(8).pattern(new RegExp('^(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$')).required().messages({
                     'string.empty': 'Password is required.',
                     'string.min': 'Password must be at least 8 characters long.',

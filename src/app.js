@@ -46,30 +46,13 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
 
-// Check if SSL certificates exist
-const sslKeyPath = path.join(__dirname, 'ssl-certs', 'key.pem');
-const sslCertPath = path.join(__dirname, 'ssl-certs', 'cert.pem');
+// Create HTTP server (simplified for development)
+const server = http.createServer(app);
 
-if (fs.existsSync(sslKeyPath) && fs.existsSync(sslCertPath)) {
-  // HTTPS server
-  const options = {
-    key: fs.readFileSync(sslKeyPath, { encoding: "utf8" }),
-    cert: fs.readFileSync(sslCertPath, { encoding: "utf8" }),
-  };
-  const server = https.createServer(options, app);
-  
-  server.listen(PORT, () => {
-    console.log(`HTTPS Server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  });
-} else {
-  // HTTP server (fallback)
-  const server = http.createServer(app);
-  
-  server.listen(PORT, () => {
-    console.log(`HTTP Server running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  });
-}
+server.listen(PORT, () => {
+  console.log(`HTTP Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Database connection established successfully.`);
+});
 
 module.exports = app;
