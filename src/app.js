@@ -2,7 +2,6 @@ require("dotenv").config();
 const express = require("express");
 const path = require('path');
 const cors = require("cors");
-const errorHandler = require("./utils/errorHandler");
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
@@ -41,8 +40,15 @@ app.get("/", (req, res) => {
   });
 });
 
-// Error handler middleware
-app.use(errorHandler);
+// Basic error handler middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ 
+    status: "error", 
+    message: "Something went wrong!",
+    error: process.env.NODE_ENV === 'development' ? err.message : {}
+  });
+});
 
 const PORT = process.env.PORT || 8080;
 
