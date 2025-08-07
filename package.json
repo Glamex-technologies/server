@@ -1,11 +1,11 @@
 {
   "name": "backend_glamex",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "src/app.js",
   "scripts": {
-    "migrate": "npx sequelize-cli db:migrate --config=config/database.config.js",
-    "seed": "npx sequelize-cli db:seed:all --config=config/database.config.js",
-    "start": "node --trace-warnings server.js"
+    "migrate": "npx sequelize-cli db:migrate --config=src/config/database.config.js",
+    "seed": "npx sequelize-cli db:seed:all --config=src/config/database.config.js",
+    "start": "node src/app.js"
   },
   "keywords": [],
   "author": "",
