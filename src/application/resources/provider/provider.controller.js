@@ -58,7 +58,7 @@ module.exports = class ProviderController {
         password: hashedPassword,
         terms_and_condition: data.terms_and_condition || 1,
         gender: data.gender,
-        country_id: data.country_id || 1, // Default to first country if not provided
+        country_id: data.country_id || 1, // Default to first country if not provider
         city_id: data.city_id || 1, // Default to first city if not provided
         is_verified: 0,
         status: 1, // User account is active by default
@@ -276,11 +276,26 @@ module.exports = class ProviderController {
   async authenticate(req, res) {
     try {
       console.log("ProviderController@authenticate");
-      const serviceProvider = req.provider;
-      const user = req.user; // User information from middleware
+      const user = req.user; // User information from middleware (phone, password auth)
 
       // Check if user is verified
       if (!user.is_verified) {
+        // Generate OTP and set it in database (hardcoded as 1111 for now)
+        try {
+          const otpRecord = await OtpVerification.createForEntity(
+            "provider",
+            user.id,
+            user.phone_code + user.phone_number,
+            "registration"
+          );
+          console.log("Provider User OTP created for unverified user:", {
+            otp_code: otpRecord.otp_code,
+            expires_at: otpRecord.expires_at,
+          });
+        } catch (error) {
+          console.error("Error creating provider user OTP:", error);
+        }
+
         return response.validationError('Please verify your account first', res, {
           verification_required: true,
           message: 'Your account needs to be verified before you can login'
@@ -288,17 +303,54 @@ module.exports = class ProviderController {
       }
 
       // Check if provider profile exists
+      const serviceProvider = await ServiceProvider.findOne({
+        where: { user_id: user.id }
+      });
+
       if (!serviceProvider) {
-        return response.validationError('Please create your provider profile first', res, {
+        // Generate token with user data and let them create profile
+        const userObj = {
+          user_id: user.id,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          userType: "provider",
+        };
+
+        const accessToken = await genrateToken(userObj);
+        const result = {
+          access_token: accessToken,
+          user: {
+            user_id: user.id,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            full_name: user.full_name,
+            email: user.email,
+            phone_code: user.phone_code,
+            phone_number: user.phone_number,
+            verified_at: user.verified_at,
+          },
           profile_required: true,
-          message: 'You need to create your provider profile before you can access the app'
-        });
+          message: 'Please create your provider profile to continue'
+        };
+
+        return response.success("Login successful. Please create your provider profile.", res, result);
       }
 
       // Check profile completion status
       if (serviceProvider.step_completed < 6) {
         console.log(`🔍 Provider ${serviceProvider.id}: Step ${serviceProvider.step_completed}/6 incomplete`);
+        
+        // Generate token even for incomplete steps so user can complete them
+        const userObj = {
+          user_id: user.id,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          userType: "provider",
+        };
+
+        const accessToken = await genrateToken(userObj);
         return response.validationError('Please complete your profile setup first', res, {
+          access_token: accessToken,
           setup_required: true,
           current_step: serviceProvider.step_completed,
           total_steps: 6,
@@ -309,24 +361,32 @@ module.exports = class ProviderController {
       // Check if profile is approved by admin (only if steps are completed)
       if (serviceProvider.step_completed === 6 && serviceProvider.is_approved !== 1) {
         console.log(`🔍 Provider ${serviceProvider.id}: Steps complete but not approved by admin`);
+        
+        // Generate token even for unapproved profiles so user can check status
+        const userObj = {
+          user_id: user.id,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          userType: "provider",
+        };
+
+        const accessToken = await genrateToken(userObj);
         return response.validationError('Wait for the admin to verify your profile', res, {
+          access_token: accessToken,
           approval_required: true,
           message: 'Your profile is complete and under review by admin. You will be notified once approved.'
         });
       }
 
-      // All checks passed - generate token and login
-      const serviceProviderObj = {
-        id: serviceProvider.id,
+      // All checks passed - generate token with user model data
+      const userObj = {
         user_id: user.id,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
-        provider_type: serviceProvider.provider_type,
-        step_completed: serviceProvider.step_completed,
         userType: "provider",
       };
 
-      const accessToken = await genrateToken(serviceProviderObj);
+      const accessToken = await genrateToken(userObj);
       const result = {
         access_token: accessToken,
         service_provider: {
