@@ -1497,4 +1497,71 @@ module.exports = class ProviderController {
       return response.exception(error.message, res);
     }
   }
-};
+
+  /**
+   * Step 1: Subscription Payment
+   * Mock payment that always returns true and creates/updates ServiceProvider with subscription details
+   */
+  async step1SubscriptionPayment(req, res) {
+    console.log("ProviderController@step1SubscriptionPayment");
+    const data = req.body;
+
+    try {
+      // Verify user exists and is a provider
+      const user = await User.findByPk(data.user_id);
+      if (!user || user.user_type !== "provider") {
+        return response.badRequest("Invalid user or user is not a provider", res, false);
+      }
+
+      // Generate random subscription ID (6 digits)
+      const subscriptionId = Math.floor(100000 + Math.random() * 900000);
+      
+      // Set subscription expiry to 1 year from now
+      const subscriptionExpiry = new Date();
+      subscriptionExpiry.setFullYear(subscriptionExpiry.getFullYear() + 1);
+
+      // Find or create ServiceProvider record
+      let serviceProvider = await ServiceProvider.findOne({
+        where: { user_id: data.user_id }
+      });
+
+      if (serviceProvider) {
+        // Update existing ServiceProvider
+        await serviceProvider.update({
+          subscription_id: subscriptionId,
+          subscription_expiry: subscriptionExpiry,
+          step_completed: 1 // Mark step 1 as completed
+        });
+      } else {
+        // Create new ServiceProvider
+        serviceProvider = await ServiceProvider.create({
+          user_id: data.user_id,
+          provider_type: 'individual', // Default value
+          subscription_id: subscriptionId,
+          subscription_expiry: subscriptionExpiry,
+          step_completed: 1 // Mark step 1 as completed
+        });
+      }
+
+      const result = {
+        user_id: user.id,
+        service_provider_id: serviceProvider.id,
+        subscription_id: subscriptionId,
+        subscription_expiry: subscriptionExpiry,
+        step_completed: 1,
+        payment_status: "success",
+        message: "Subscription payment successful"
+      };
+
+      return response.success(
+        "Step 1 completed: Subscription payment successful",
+        res,
+        result
+      );
+
+    } catch (error) {
+      console.error("Error in step1SubscriptionPayment:", error);
+      return response.exception("Failed to process subscription payment", res);
+    }
+  }
+}

@@ -692,4 +692,52 @@ module.exports = class ProviderValidator {
       return response.exception("Server error occurred", res);
     }
   }
-};
+
+  /**
+   * Validates Step 1: Subscription Payment request
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware function
+   */
+  async step1SubscriptionPayment(req, res, next) {
+    console.log("ProviderValidator@step1SubscriptionPayment");
+    try {
+      // Define validation schema for subscription payment
+      let schema = {
+        user_id: joi.number().integer().positive().required(),
+      };
+
+      // Validate request body against schema
+      let errors = await joiHelper.joiValidation(req.body, schema);
+      if (errors) {
+        return response.validationError("invalid request", res, errors[0]);
+      }
+
+      // Check if user exists and is a provider
+      const db = require("../../../startup/model");
+      let user = await db.models.User.findOne({
+        where: {
+          id: req.body.user_id,
+          user_type: "provider"
+        },
+      });
+      if (!user) {
+        return response.validationError("Provider user not found", res, false);
+      }
+
+      // Check if step 1 is already completed
+      let serviceProvider = await db.models.ServiceProvider.findOne({
+        where: { user_id: req.body.user_id }
+      });
+
+      if (serviceProvider && serviceProvider.step_completed >= 1) {
+        return response.validationError("Step 1 (Subscription Payment) is already completed", res, false);
+      }
+
+      next();
+    } catch (err) {
+      console.error("Validation Error: ", err);
+      return response.exception("Server error occurred", res);
+    }
+  }
+}

@@ -56,13 +56,11 @@ router.post(
   providerController.resetPassword
 );
 
-// Routes for users to become providers (requires user authentication)
-
-// Create provider profile (users can become providers)
+// Step 1: Subscription Payment (requires provider authentication)
 router.post(
-  "/create-profile",
-  [providerAuth],
-  providerController.createProviderProfile
+  "/step1-subscription-payment",
+  [providerAuth, providerValidator.step1SubscriptionPayment],
+  providerController.step1SubscriptionPayment
 );
 
 // Upload documents with AWS S3
