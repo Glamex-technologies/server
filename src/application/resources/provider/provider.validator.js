@@ -192,8 +192,8 @@ module.exports = class ProviderValidator {
         user_id: joi.number().required().min(1),
       };
 
-      // Validate request query against schema
-      let errors = await joiHelper.joiValidation(req.query, schema);
+      // Validate request body against schema
+      let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
         return response.validationError("invalid request", res, errors[0]);
       }
@@ -399,28 +399,17 @@ module.exports = class ProviderValidator {
         return response.validationError("invalid request", res, errors[0]);
       }
 
-      // Check if user exists (providers are now linked to users)
+      // Check if user exists and is a provider (no need to check ServiceProvider profile)
       const db = require("../../../startup/model");
       let user = await db.models.User.findOne({
         where: {
           phone_code: req.body.phone_code,
           phone_number: req.body.phone_number,
+          user_type: "provider", // Ensure it's a provider user
         },
       });
       if (!user) {
-        return response.validationError("Provider not found", res, false);
-      }
-
-      // Check if user has a provider profile
-      let provider = await db.models.ServiceProvider.findOne({
-        where: { user_id: user.id },
-      });
-      if (!provider) {
-        return response.validationError(
-          "Provider profile not found",
-          res,
-          false
-        );
+        return response.validationError("Provider account not found", res, false);
       }
 
       next();

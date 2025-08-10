@@ -30,7 +30,7 @@ router.post(
   [providerValidator.verifyVerificationOtp],
   providerController.verifyVerificationOtp
 );
-router.get(
+router.post(
   "/resend-otp",
   [providerValidator.resendOtp],
   providerController.resendOtp

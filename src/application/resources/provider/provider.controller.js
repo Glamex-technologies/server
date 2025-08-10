@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const ProviderResources = require("./provider.resources");
+const UserResources = require("../users/user.resources");
 const ResponseHelper = require("../../helpers/response.helpers");
 const { genrateToken } = require("../../helpers/jwtToken.helpers");
 const { Op } = require("sequelize");
@@ -17,6 +18,7 @@ const s3 = new AWS.S3({
 
 const response = new ResponseHelper();
 const providerResources = new ProviderResources();
+const userResources = new UserResources();
 
 // Models
 const User = db.models.User;
@@ -178,7 +180,7 @@ module.exports = class ProviderController {
    */
   async resendOtp(req, res) {
     console.log("ProviderController@resendOtp");
-    const data = req.query;
+    const data = req.body;
 
     try {
       // Find user by user_id (no ServiceProvider exists yet)
@@ -223,52 +225,8 @@ module.exports = class ProviderController {
     }
   }
 
-  /**
-   * Create provider profile for authenticated provider
-   */
-  async createProviderProfile(req, res) {
-    console.log("ProviderController@createProviderProfile");
-    const data = req.body;
-    const userId = req.user.id; // From auth middleware (only user exists, no provider yet)
 
-    try {
-      // Check if user already has a provider profile
-      const existingProvider = await ServiceProvider.findOne({
-        where: { user_id: userId },
-      });
 
-      if (existingProvider) {
-        return response.conflict("Provider profile already exists for this user", res);
-      }
-
-      // Create new provider profile
-      const providerData = {
-        user_id: userId,
-        provider_type: data.provider_type || "individual",
-        salon_name: data.salon_name || null,
-        description: data.description || null,
-        location: data.location || null,
-        latitude: data.latitude || null,
-        longitude: data.longitude || null,
-        country_id: data.country_id || null,
-        city_id: data.city_id || null,
-        banner_image: data.banner_image || null,
-        step_completed: 1,
-        is_approved: 0,
-        is_available: 1,
-      };
-
-      const provider = await ServiceProvider.create(providerData);
-
-      return response.success("Provider profile created successfully", res, {
-        provider: provider,
-        next_step: "document_upload",
-      });
-    } catch (error) {
-      console.error("Error creating provider profile:", error);
-      return response.exception(error.message, res);
-    }
-  }
 
   /**
    * Provider authentication (login)
@@ -427,30 +385,18 @@ module.exports = class ProviderController {
     console.log("ProviderController@forgotPassword");
     const data = req.body;
 
-    // Find user first (since providers are now linked to users)
+    // Find user by phone number (no need to find ServiceProvider)
     const user = await User.findOne({
       where: {
         phone_code: data.phone_code,
         phone_number: data.phone_number,
+        user_type: "provider", // Ensure it's a provider user
       },
     });
 
     if (!user) {
       return response.badRequest(
-        "No account found with this phone number",
-        res,
-        false
-      );
-    }
-
-    // Find associated service provider
-    const serviceProvider = await ServiceProvider.findOne({
-      where: { user_id: user.id },
-    });
-
-    if (!serviceProvider) {
-      return response.badRequest(
-        "Provider profile not found for this user",
+        "No provider account found with this phone number",
         res,
         false
       );
@@ -459,7 +405,7 @@ module.exports = class ProviderController {
     try {
       const otpRecord = await OtpVerification.createForEntity(
         "provider",
-        serviceProvider.id,
+        user.id, // Use user.id instead of serviceProvider.id
         data.phone_code + data.phone_number,
         "password_reset"
       );
@@ -469,9 +415,9 @@ module.exports = class ProviderController {
     }
 
     const result = {
-      id: serviceProvider.id,
-      phone_code: serviceProvider.phone_code,
-      phone_number: serviceProvider.phone_number,
+      user_id: user.id,
+      phone_code: user.phone_code,
+      phone_number: user.phone_number,
     };
 
     return response.success(
@@ -487,17 +433,18 @@ module.exports = class ProviderController {
   async verifyForgotPasswordOtp(req, res) {
     console.log("ProviderController@verifyForgotPasswordOtp");
     const data = req.body;
-    const serviceProvider = await providerResources.findOne({
-      id: data.provider_id,
-    });
+    
+    // Find user by user_id (no need to find ServiceProvider)
+    const user = await User.findByPk(data.user_id);
 
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
+    if (!user) {
+      return response.badRequest("User account not found", res, false);
     }
 
+    // Verify OTP against user (not serviceProvider)
     const verificationResult = await OtpVerification.verifyForEntity(
       "provider",
-      serviceProvider.id,
+      user.id, // Use user.id instead of serviceProvider.id
       String(data.otp),
       "password_reset"
     );
@@ -507,7 +454,7 @@ module.exports = class ProviderController {
     }
 
     const result = {
-      id: serviceProvider.id,
+      user_id: user.id,
     };
 
     return response.success(
@@ -523,19 +470,15 @@ module.exports = class ProviderController {
   async resetPassword(req, res) {
     console.log("ProviderController@resetPassword");
     const data = req.body;
-    const serviceProvider = await ServiceProvider.findByPk(data.provider_id);
+    
+    // Find user directly by user_id (no need to find ServiceProvider)
+    const user = await User.findByPk(data.user_id);
 
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
-    }
-
-    // Find the associated user
-    const user = await User.findByPk(serviceProvider.user_id);
     if (!user) {
       return response.badRequest("User account not found", res, false);
     }
 
-    // Update password in user table (since password is stored in users table now)
+    // Update password directly in user table
     const hashedPassword = bcrypt.hashSync(data.password, 10);
     await user.update({ password: hashedPassword });
 
@@ -1001,43 +944,7 @@ module.exports = class ProviderController {
   /**
    * Verify OTP for password reset
    */
-  async verifyForgotPasswordOtp(req, res) {
-    console.log("ProviderController@verifyForgotPasswordOtp");
-    const data = req.body;
-    const serviceProvider = await providerResources.findOne({
-      id: data.provider_id,
-    });
 
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
-    }
-
-    // Verify OTP using the new system
-    const verificationResult = await OtpVerification.verifyForEntity(
-      "provider",
-      serviceProvider.id,
-      String(data.otp),
-      "password_reset"
-    );
-
-    if (!verificationResult.success) {
-      return response.badRequest(verificationResult.message, res, false);
-    }
-
-    console.log("Provider password reset OTP verified successfully");
-
-    const provider = serviceProvider; // Use existing provider data
-
-    const result = {
-      id: provider.id,
-    };
-
-    return response.success(
-      "OTP verified successfully. You can now reset your password.",
-      res,
-      result
-    );
-  }
 
   /**
    * Get paginated list of all providers with filtering options
