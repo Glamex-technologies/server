@@ -1504,14 +1504,12 @@ module.exports = class ProviderController {
    */
   async step1SubscriptionPayment(req, res) {
     console.log("ProviderController@step1SubscriptionPayment");
-    const data = req.body;
-
+    console.log("Request body:", req.body);
+    
     try {
-      // Verify user exists and is a provider
-      const user = await User.findByPk(data.user_id);
-      if (!user || user.user_type !== "provider") {
-        return response.badRequest("Invalid user or user is not a provider", res, false);
-      }
+      // Get user_id from authenticated user (from token)
+      const userId = req.user.id;
+      console.log("User ID from token:", userId);
 
       // Generate random subscription ID (6 digits)
       const subscriptionId = Math.floor(100000 + Math.random() * 900000);
@@ -1522,7 +1520,7 @@ module.exports = class ProviderController {
 
       // Find or create ServiceProvider record
       let serviceProvider = await ServiceProvider.findOne({
-        where: { user_id: data.user_id }
+        where: { user_id: userId }
       });
 
       if (serviceProvider) {
@@ -1535,7 +1533,7 @@ module.exports = class ProviderController {
       } else {
         // Create new ServiceProvider
         serviceProvider = await ServiceProvider.create({
-          user_id: data.user_id,
+          user_id: userId,
           provider_type: 'individual', // Default value
           subscription_id: subscriptionId,
           subscription_expiry: subscriptionExpiry,
@@ -1544,7 +1542,7 @@ module.exports = class ProviderController {
       }
 
       const result = {
-        user_id: user.id,
+        user_id: userId,
         service_provider_id: serviceProvider.id,
         subscription_id: subscriptionId,
         subscription_expiry: subscriptionExpiry,
@@ -1562,6 +1560,70 @@ module.exports = class ProviderController {
     } catch (error) {
       console.error("Error in step1SubscriptionPayment:", error);
       return response.exception("Failed to process subscription payment", res);
+    }
+  }
+
+  /**
+   * Step 2: Set Provider Type (Individual or Salon)
+   */
+  async step2ProviderType(req, res) {
+    console.log("ProviderController@step2ProviderType");
+    const data = req.body;
+
+    try {
+      // Get user_id from authenticated user (from token)
+      const userId = req.user.id;
+
+      // Find ServiceProvider record
+      let serviceProvider = await ServiceProvider.findOne({
+        where: { user_id: userId }
+      });
+
+      if (!serviceProvider) {
+        return response.badRequest("ServiceProvider record not found. Please complete Step 1 first.", res, false);
+      }
+
+      // Check if step 1 is completed
+      if (serviceProvider.step_completed < 1) {
+        return response.badRequest("Please complete Step 1 (Subscription Payment) first", res, false);
+      }
+
+      // Check if step 2 is already completed
+      if (serviceProvider.step_completed >= 2) {
+        return response.badRequest("Step 2 (Provider Type) is already completed", res, false);
+      }
+
+      // Update ServiceProvider with provider type and salon name (if applicable)
+      const updateData = {
+        provider_type: data.provider_type,
+        step_completed: 2 // Mark step 2 as completed
+      };
+
+      // Add salon name if provider type is salon
+      if (data.provider_type === 'salon' && data.salon_name) {
+        updateData.salon_name = data.salon_name;
+      }
+
+      await serviceProvider.update(updateData);
+
+      const result = {
+        user_id: userId,
+        service_provider_id: serviceProvider.id,
+        provider_type: data.provider_type,
+        salon_name: data.provider_type === 'salon' ? data.salon_name : null,
+        step_completed: 2,
+        message: "Provider type set successfully"
+      };
+
+      return response.success(
+        "Step 2 completed: Provider type set successfully",
+        res,
+        result
+      );
+
+    } catch (error) {
+      console.error("Error in step2ProviderType:", error);
+      return response.exception("Failed to set provider type", res);
     }
   }
 }

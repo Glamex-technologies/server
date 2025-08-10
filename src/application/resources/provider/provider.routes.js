@@ -16,6 +16,14 @@ const providerValidator = new ProviderValidator();
 // Configure multer for file uploads
 const upload = multer({ storage: multer.memoryStorage() });
 
+// Middleware to handle empty JSON bodies
+const handleEmptyBody = (req, res, next) => {
+  if (req.headers['content-type'] === 'application/json' && (!req.body || Object.keys(req.body).length === 0)) {
+    req.body = {};
+  }
+  next();
+};
+
 // Route for welcome message or basic get
 router.get("/", providerController.getWelcome);
 
@@ -59,8 +67,15 @@ router.post(
 // Step 1: Subscription Payment (requires provider authentication)
 router.post(
   "/step1-subscription-payment",
-  [providerAuth, providerValidator.step1SubscriptionPayment],
+  [handleEmptyBody, providerAuth, providerValidator.step1SubscriptionPayment],
   providerController.step1SubscriptionPayment
+);
+
+// Step 2: Set Provider Type (requires provider authentication)
+router.post(
+  "/step2-provider-type",
+  [providerAuth, providerValidator.step2ProviderType],
+  providerController.step2ProviderType
 );
 
 // Upload documents with AWS S3

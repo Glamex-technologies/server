@@ -702,9 +702,43 @@ module.exports = class ProviderValidator {
   async step1SubscriptionPayment(req, res, next) {
     console.log("ProviderValidator@step1SubscriptionPayment");
     try {
-      // Define validation schema for subscription payment
+      // For Step 1, we accept empty body or any valid JSON
+      // The user_id comes from the authenticated token
+      
+      // Check if step 1 is already completed using req.user.id
+      const db = require("../../../startup/model");
+      let serviceProvider = await db.models.ServiceProvider.findOne({
+        where: { user_id: req.user.id }
+      });
+
+      if (serviceProvider && serviceProvider.step_completed >= 1) {
+        return response.validationError("Step 1 (Subscription Payment) is already completed", res, false);
+      }
+
+      next();
+    } catch (err) {
+      console.error("Validation Error: ", err);
+      return response.exception("Server error occurred", res);
+    }
+  }
+
+  /**
+   * Validates Step 2: Provider Type request
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware function
+   */
+  async step2ProviderType(req, res, next) {
+    console.log("ProviderValidator@step2ProviderType");
+    try {
+      // Define validation schema for provider type
       let schema = {
-        user_id: joi.number().integer().positive().required(),
+        provider_type: joi.string().valid('individual', 'salon').required(),
+        salon_name: joi.string().when('provider_type', {
+          is: 'salon',
+          then: joi.required(),
+          otherwise: joi.optional()
+        })
       };
 
       // Validate request body against schema
@@ -713,25 +747,23 @@ module.exports = class ProviderValidator {
         return response.validationError("invalid request", res, errors[0]);
       }
 
-      // Check if user exists and is a provider
+      // Check if ServiceProvider exists and step 1 is completed using req.user.id
       const db = require("../../../startup/model");
-      let user = await db.models.User.findOne({
-        where: {
-          id: req.body.user_id,
-          user_type: "provider"
-        },
+      let serviceProvider = await db.models.ServiceProvider.findOne({
+        where: { user_id: req.user.id }
       });
-      if (!user) {
-        return response.validationError("Provider user not found", res, false);
+
+      if (!serviceProvider) {
+        return response.validationError("ServiceProvider record not found. Please complete Step 1 first.", res, false);
       }
 
-      // Check if step 1 is already completed
-      let serviceProvider = await db.models.ServiceProvider.findOne({
-        where: { user_id: req.body.user_id }
-      });
+      if (serviceProvider.step_completed < 1) {
+        return response.validationError("Please complete Step 1 (Subscription Payment) first", res, false);
+      }
 
-      if (serviceProvider && serviceProvider.step_completed >= 1) {
-        return response.validationError("Step 1 (Subscription Payment) is already completed", res, false);
+      // Check if step 2 is already completed
+      if (serviceProvider.step_completed >= 2) {
+        return response.validationError("Step 2 (Provider Type) is already completed", res, false);
       }
 
       next();
