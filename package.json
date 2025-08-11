@@ -16,6 +16,11 @@
     "pnpm": "10.x"
   },
   "packageManager": "pnpm@10.12.4",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "bcrypt"
+    ]
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.817.0",
     "aws-sdk": "^2.1692.0",
