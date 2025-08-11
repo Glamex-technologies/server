@@ -11,11 +11,12 @@ const Service = require("../application/models/service.model");
 const Category = require("../application/models/category.model");
 const SubCategory = require("../application/models/subcategory.model");
 const ServiceProvider = require("../application/models/serviceprovider.model");
-const ServiceProviderDetail = require("../application/models/serviceproviderdetail.model");
 const ServiceProviderAvailability = require("../application/models/serviceProviderAvailability.model");
 const User = require("../application/models/user.model");
 const ServiceList = require("../application/models/serviceList.model");
 const Gallery = require("../application/models/gallery.model");
+const OtpVerification = require("../application/models/otpVerification.model");
+const BankDetails = require("../application/models/bankDetails.model");
 
 const models = {
   Token: Token(sequelize, Sequelize.DataTypes),
@@ -27,11 +28,12 @@ const models = {
   Category: Category(sequelize, Sequelize.DataTypes),
   SubCategory: SubCategory(sequelize, Sequelize.DataTypes),
   ServiceProvider: ServiceProvider(sequelize, Sequelize.DataTypes),
-  ServiceProviderDetail: ServiceProviderDetail(sequelize, Sequelize.DataTypes),
   ServiceProviderAvailability : ServiceProviderAvailability(sequelize, Sequelize.DataTypes),
   User: User(sequelize, Sequelize.DataTypes),
   ServiceList: ServiceList(sequelize, Sequelize.DataTypes),
   Gallery: Gallery(sequelize, Sequelize.DataTypes),
+  OtpVerification: OtpVerification(sequelize, Sequelize.DataTypes),
+  BankDetails: BankDetails(sequelize, Sequelize.DataTypes),
 };
 
 Object.values(models)

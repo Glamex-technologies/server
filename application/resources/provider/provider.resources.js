@@ -57,26 +57,16 @@ module.exports = class ProviderResources {
   }
 
   /**
-   * Create a new ServiceProvider or update existing one if found by phone_code and phone_number
-   * @param {Object} data - Data to create or update the ServiceProvider
-   * @returns {Promise<Object>} - Created or updated ServiceProvider instance
+   * Create a new ServiceProvider (no longer uses phone_code/phone_number since those are in users table)
+   * @param {Object} data - Data for ServiceProvider creation
+   * @returns {Promise<Object>} - ServiceProvider model instance
    */
   async create(data) {
     try {
-      // Attempt to find or create by unique phone code and phone number
-      const [serviceProvider, created] = await ServiceProvider.findOrCreate({
-        where: { phone_code: data.phone_code, phone_number: data.phone_number },  
-        defaults: data
-      });
-      // If found, update with new data
-      if (!created) {
-        await ServiceProvider.update(data, {
-          where: { id: serviceProvider.id } 
-        });
-      }
+      const serviceProvider = await ServiceProvider.create(data);
       return serviceProvider;
     } catch (error) {
-      console.error('Error in creating admin:', error);
+      console.error('Error in creating service provider:', error);
       throw error;
     }
   }

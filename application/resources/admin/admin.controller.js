@@ -4,6 +4,8 @@ const crypto = require("crypto");
 const { genrateToken } = require("../../helpers/jwtToken.helpers");
 const ResponseHelper = require("../../helpers/response.helpers");
 const AdminResources = require("./admin.resources");
+const db = require("../../../startup/model");
+const OtpVerification = db.models.OtpVerification;
 
 const response = new ResponseHelper();
 const adminResources = new AdminResources();
@@ -95,11 +97,24 @@ module.exports = class AdminController {
             if (!admin) {
                 return response.badRequest('Admin not found', res, false);
             }
-            const otp = 1111; // In production, generate a secure random OTP
-            const adminResult = await adminResources.updateAdmin(
-                { verification_otp: otp, verification_otp_created_at: new Date() },
-                { id: admin.id }
-            );
+            // Create OTP for password reset using new system
+            try {
+                const otpRecord = await OtpVerification.createForEntity(
+                    'admin',
+                    admin.id,
+                    admin.email, // Using email as contact method for admin
+                    'password_reset'
+                );
+                console.log("Admin password reset OTP created:", {
+                    otp_code: otpRecord.otp_code,
+                    expires_at: otpRecord.expires_at,
+                });
+            } catch (error) {
+                console.error("Error creating admin password reset OTP:", error);
+                return response.exception("Failed to create OTP", res);
+            }
+            
+            const adminResult = admin; // Use existing admin data
             const result = {
                 id: adminResult.id,
                 email: adminResult.email,
@@ -122,12 +137,23 @@ module.exports = class AdminController {
             if (!admin) {
                 return response.badRequest('Admin not found', res, false);
             }
-            if (admin.verification_otp !== data.otp) {
-                return response.badRequest('Invalid OTP', res, false);
+            // Verify OTP using the new system
+            const verificationResult = await OtpVerification.verifyForEntity(
+                'admin',
+                admin.id,
+                String(data.otp),
+                'password_reset'
+            );
+
+            if (!verificationResult.success) {
+                return response.badRequest(verificationResult.message, res, false);
             }
+
+            console.log("Admin password reset OTP verified successfully");
+            
             const rememberToken = crypto.randomBytes(42).toString("hex").slice(0, 55);
             await adminResources.updateAdmin(
-                { verification_otp: null, verification_otp_created_at: null, remember_token: rememberToken },
+                { remember_token: rememberToken },
                 { id: data.admin_id }
             );
             const result = {
@@ -178,11 +204,22 @@ module.exports = class AdminController {
             if (!admin) {
                 return response.badRequest('Admin not found', res, false);
             }
-            const otp = 1111; // In production, generate a secure random OTP
-            await adminResources.updateAdmin(
-                { verification_otp: otp, verification_otp_created_at: new Date() },
-                { id: data.admin_id }
-            );
+            // Create new OTP using the new system
+            try {
+                const otpRecord = await OtpVerification.createForEntity(
+                    'admin',
+                    admin.id,
+                    admin.email, // Using email as contact method for admin
+                    'password_reset'
+                );
+                console.log("Admin resend OTP created:", {
+                    otp_code: otpRecord.otp_code,
+                    expires_at: otpRecord.expires_at,
+                });
+            } catch (error) {
+                console.error("Error creating admin resend OTP:", error);
+                return response.exception("Failed to create OTP", res);
+            }
             const result = {
                 id: admin.id,
                 email: admin.email

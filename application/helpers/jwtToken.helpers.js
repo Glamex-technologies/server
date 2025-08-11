@@ -20,7 +20,7 @@ const verifyToken = async(token) => {
     const record = await Token.findOne({ where: { token: token } });
     if (!record) return null;
     if (new Date() > record.expires_at) {
-      return null;
+      return null; 
     }
     const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
     return decoded;

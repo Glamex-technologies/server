@@ -7,7 +7,7 @@ module.exports = {
         type: Sequelize.INTEGER,
         autoIncrement: true,
         primaryKey: true
-      },
+      }, 
       token: {
         type: Sequelize.TEXT,
         allowNull: false

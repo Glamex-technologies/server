@@ -15,6 +15,12 @@ module.exports = class ProviderValidator {
      * @param {Object} res - Express response object
      * @param {Function} next - Express next middleware function
      */
+    /**
+     * Validates authentication request and verifies provider credentials
+     * @param {Object} req - Express request object
+     * @param {Object} res - Express response object
+     * @param {Function} next - Express next middleware function
+     */
     async authenticate(req, res, next) {
         console.log('ProviderValidator@authenticate');
         try {
@@ -31,30 +37,111 @@ module.exports = class ProviderValidator {
                 return response.validationError('invalid request', res, errors[0])
             }
             
-            // Check if provider exists
-            let provider = await providerResources.getAllDetails({phone_code: req.body.phone_code, phone_number: req.body.phone_number});
-            if (!provider) {
+            // Check if user exists (providers are now linked to users)
+            const db = require('../../../startup/model');
+            let user = await db.models.User.findOne({
+                where: {
+                    phone_code: req.body.phone_code, 
+                    phone_number: req.body.phone_number
+                }
+            });
+            if (!user) {
                 return response.validationError('Provider not found', res, false);
             }
             
-            // Validate password
-            let isPasswordValid = await joiHelper.validatePassword(req.body.password, provider.password);
+            // Check if user has a provider profile
+            let provider = await db.models.ServiceProvider.findOne({
+                where: { user_id: user.id }
+            });
+            if (!provider) {
+                return response.validationError('Provider profile not found', res, false);
+            }
+            
+            // Validate password against user
+            let isPasswordValid = await joiHelper.validatePassword(req.body.password, user.password);
             if (!isPasswordValid) {
                 return response.validationError("Invalid password", res, false);
             }
             
-            // Check if profile is verified by admin
-            if (provider.step_completed == 6 && provider.admin_verified != 1) {
-                return response.validationError('Wait for the admin to verify your profile', res, null);
+            // FIRST CHECK: Is the user verified? If not, generate new OTP and prompt for verification
+            if (!user.verified_at || user.is_verified !== 1) {
+                console.log(`🔍 Provider ${provider.id}: User not verified, generating new OTP`);
+                
+                try {
+                    // Generate new OTP for the provider
+                    const db = require('../../../startup/model');
+                    
+                    // First, invalidate any existing OTPs for this provider
+                    await db.models.OtpVerification.update(
+                        { is_verified: true }, // Mark as used/expired
+                        {
+                            where: {
+                                entity_type: "provider",
+                                entity_id: provider.id,
+                                purpose: "registration",
+                                is_verified: false,
+                            },
+                        }
+                    );
+
+                    // Generate new OTP
+                    const otp = "1111"; // Hardcoded for testing
+                    const expiresAt = new Date(Date.now() + 5 * 60000); // 5 minutes from now
+
+                    const otpRecord = await db.models.OtpVerification.create({
+                        entity_type: "provider",
+                        entity_id: provider.id,
+                        phone_number: user.phone_code + user.phone_number,
+                        purpose: "registration",
+                        otp_code: otp,
+                        expires_at: expiresAt,
+                    });
+                    
+                    console.log("New OTP generated for unverified user:", {
+                        otp_code: otpRecord.otp_code,
+                        expires_at: otpRecord.expires_at,
+                    });
+                    
+                    return response.validationError('Please verify your account with OTP first', res, {
+                        otp_verification_required: true,
+                        message: 'A new OTP has been sent to your phone number. Please verify your account.',
+                        provider_id: provider.id
+                    });
+                } catch (error) {
+                    console.error("Error generating OTP for unverified user:", error);
+                    return response.validationError('Please verify your account with OTP first', res, {
+                        otp_verification_required: true,
+                        message: 'Your account needs to be verified. Please check your phone for OTP or use resend OTP.',
+                        provider_id: provider.id
+                    });
+                }
             }
             
-            // Check if account is active
-            if (provider.status !== 1) {
-                return response.validationError("Your account is not active", res, false);
+            // SECOND CHECK: If verified, then check profile completion status
+            if (provider.step_completed < 6) {
+                console.log(`🔍 Provider ${provider.id}: Step ${provider.step_completed}/6 incomplete`);
+                return response.validationError('Please complete your profile setup first', res, {
+                    setup_required: true,
+                    current_step: provider.step_completed,
+                    total_steps: 6,
+                    message: `Complete all ${6 - provider.step_completed} remaining steps to access the app`
+                });
             }
             
-            // Attach provider to request object and proceed
+            // THIRD CHECK: Check if profile is approved by admin (only if steps are completed)
+            if (provider.step_completed === 6 && provider.is_approved !== 1) {
+                console.log(`🔍 Provider ${provider.id}: Steps complete but not approved by admin`);
+                return response.validationError('Wait for the admin to verify your profile', res, {
+                    approval_required: true,
+                    message: 'Your profile is complete and under review by admin. You will be notified once approved.'
+                });
+            }
+            
+            console.log(`✅ Provider ${provider.id}: All checks passed - ready for login`);
+            
+            // Attach provider with user information to request object
             req.provider = provider;
+            req.user = user; // Also attach user for easy access
             next();
         } catch (err) {
             console.error('Validation Error: ', err);
@@ -85,6 +172,8 @@ module.exports = class ProviderValidator {
                 }),
                 gender: joi.number().valid(1, 2, 3).required(),
                 terms_and_condition: joi.number().valid(1).required(),
+                country_id: joi.number().min(1).optional(),
+                city_id: joi.number().min(1).optional(),
             }
     
             // Validate request body against schema
@@ -93,10 +182,31 @@ module.exports = class ProviderValidator {
                 return response.validationError('invalid request', res, errors[0])
             }
             
-            // Check if phone number already exists
-            let provider = await providerResources.findOne({phone_code: req.body.phone_code, phone_number: req.body.phone_number});
-            if (provider && provider.verified_at) {
-                return response.badRequest('Phone number already exists.', res);
+            // Check if phone number already exists in users table (since providers are now linked to users)
+            const db = require('../../../startup/model');
+            let existingUser = await db.models.User.findOne({
+                where: {
+                    phone_code: req.body.phone_code, 
+                    phone_number: req.body.phone_number
+                }
+            });
+            
+            if (existingUser) {
+                if (existingUser.verified_at) {
+                    return response.badRequest('Phone number already exists and is verified. Please use the login endpoint.', res);
+                } else {
+                    return response.badRequest('Phone number already exists but not verified. Please complete verification or use resend OTP.', res);
+                }
+            }
+            
+            // Check if email already exists
+            if (req.body.email) {
+                let existingEmailUser = await db.models.User.findOne({
+                    where: { email: req.body.email }
+                });
+                if (existingEmailUser) {
+                    return response.badRequest('Email address already exists.', res);
+                }
             }
             
             next();
@@ -327,10 +437,24 @@ module.exports = class ProviderValidator {
                 return response.validationError('invalid request', res, errors[0])
             }
             
-            // Check if provider exists
-            let provider = await providerResources.findOne({phone_code: req.body.phone_code, phone_number: req.body.phone_number});
-            if (!provider) {
+            // Check if user exists (providers are now linked to users)
+            const db = require('../../../startup/model');
+            let user = await db.models.User.findOne({
+                where: {
+                    phone_code: req.body.phone_code, 
+                    phone_number: req.body.phone_number
+                }
+            });
+            if (!user) {
                 return response.validationError('Provider not found', res, false);
+            }
+            
+            // Check if user has a provider profile
+            let provider = await db.models.ServiceProvider.findOne({
+                where: { user_id: user.id }
+            });
+            if (!provider) {
+                return response.validationError('Provider profile not found', res, false);
             }
             
             next();

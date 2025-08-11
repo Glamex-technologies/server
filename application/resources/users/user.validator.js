@@ -72,9 +72,21 @@ module.exports = class UserValidator {
                 return response.validationError('invalid request', res, errors[0])
             }
             // Check if phone number already exists
-            let user = await userResources.findOne({ phone_code: req.body.phone_code, phone_number: req.body.phone_number });
-            if (user && user.verified_at) {
-                return response.badRequest('Phone number already exists.', res);
+            let existingUser = await userResources.findOne({ phone_code: req.body.phone_code, phone_number: req.body.phone_number });
+            if (existingUser) {
+                if (existingUser.verified_at) {
+                    return response.badRequest('Phone number already exists and is verified. Please use the login endpoint.', res);
+                } else {
+                    return response.badRequest('Phone number already exists but not verified. Please complete verification or use resend OTP.', res);
+                }
+            }
+            
+            // Check if email already exists
+            if (req.body.email) {
+                let existingEmailUser = await userResources.findOne({ email: req.body.email });
+                if (existingEmailUser) {
+                    return response.badRequest('Email address already exists.', res);
+                }
             }
             next();
         } catch (err) {

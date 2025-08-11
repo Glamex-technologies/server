@@ -46,23 +46,13 @@ module.exports = class UserResources {
     }
   }
 
-  // Create a new user or update if already exists
+  // Create a new user (validation should prevent duplicates)
   async create(data) {
     try {
-      // Find or create user based on phone_code and phone_number
-      const [user, created] = await User.findOrCreate({
-        where: { phone_code: data.phone_code, phone_number: data.phone_number },  
-        defaults: data
-      });
-      // If user exists, update with new data
-      if (!created) {
-        await User.update(data, {
-            where: { id: user.id } // <-- FIX: Pass `where` condition
-        });
-      }
+      const user = await User.create(data);
       return user;
     } catch (error) {
-      console.error('Error in creating admin:', error);
+      console.error('Error in creating user:', error);
       throw error;
     }
   }

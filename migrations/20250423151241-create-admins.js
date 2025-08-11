@@ -56,16 +56,8 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: true
       },
-      verification_otp: {
-        type: Sequelize.STRING,
-        allowNull: true
-      },
       remember_token: {
         type: Sequelize.STRING,
-        allowNull: true
-      },
-      verification_otp_created_at: {
-        type: Sequelize.DATE,
         allowNull: true
       },
       created_at: {

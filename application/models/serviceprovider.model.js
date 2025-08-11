@@ -1,4 +1,5 @@
 'use strict';
+
 module.exports = (sequelize, DataTypes) => {
   const ServiceProvider = sequelize.define('ServiceProvider', {
     id: {
@@ -7,83 +8,32 @@ module.exports = (sequelize, DataTypes) => {
       primaryKey: true,
       allowNull: false
     },
-    first_name: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    last_name: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    full_name: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    phone_code: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    phone_number: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    email: {
-      type: DataTypes.STRING,
-      allowNull: true
-    },
-    password: {
-      type: DataTypes.STRING,
-      allowNull: false
-    },
-    terms_and_condition: {
-      type: DataTypes.TINYINT,
-      allowNull: false,
-      defaultValue: 0
-    },
-    verification_otp: {
-      type: DataTypes.STRING,
-      allowNull: true
-    },
-    verification_otp_created_at: {
-      type: DataTypes.DATE,
-      allowNull: true
-    },
-    verified_at: {
-      type: DataTypes.DATE,
-      allowNull: true
-    },
-    admin_verified: {
-      type: DataTypes.TINYINT,
-      allowNull: false,
-      defaultValue: 0
-    },
-    provider_type: {
-      type: DataTypes.TINYINT,
-      allowNull: false,
-      defaultValue: 1
-    },
-    step_completed: {
+    user_id: {
       type: DataTypes.INTEGER,
       allowNull: false,
-      defaultValue: 0
+      references: {
+        model: 'users',
+        key: 'id'
+      }
+    },
+    provider_type: {
+      type: DataTypes.ENUM('individual', 'salon'),
+      allowNull: false,
+      defaultValue: 'individual'
     },
     salon_name: {
       type: DataTypes.STRING,
       allowNull: true
     },
-    country_id: {
-      type: DataTypes.INTEGER,
-      allowNull: true
-    },
-    city_id: {
-      type: DataTypes.INTEGER,
+    banner_image: {
+      type: DataTypes.STRING,
       allowNull: true
     },
     description: {
       type: DataTypes.TEXT,
       allowNull: true
     },
-    banner_image: {
+    location: {
       type: DataTypes.STRING,
       allowNull: true
     },
@@ -95,11 +45,70 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DECIMAL(11, 8),
       allowNull: true
     },
-    location: {
+    country_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'countries',
+        key: 'id'
+      }
+    },
+    city_id: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      references: {
+        model: 'cities',
+        key: 'id'
+      }
+    },
+    national_id_image_url: {
       type: DataTypes.STRING,
       allowNull: true
     },
-    status: {
+    freelance_certificate_image_url: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    commercial_registration_image_url: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    overall_rating: {
+      type: DataTypes.FLOAT,
+      allowNull: false,
+      defaultValue: 0
+    },
+    total_reviews: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0
+    },
+    total_bookings: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0
+    },
+    total_customers: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0
+    },
+    is_approved: {
+      type: DataTypes.TINYINT,
+      allowNull: false,
+      defaultValue: 0
+    },
+    is_available: {
+      type: DataTypes.TINYINT,
+      allowNull: false,
+      defaultValue: 1
+    },
+    step_completed: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0
+    },
+    notification: {
       type: DataTypes.TINYINT,
       allowNull: false,
       defaultValue: 1
@@ -108,76 +117,74 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
-    notification: {
-      type: DataTypes.TINYINT,
-      allowNull: false,
-      defaultValue: 1
-    },
-    avg_rating: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      defaultValue: 0
-    },
-    review_count: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      defaultValue: 0
-    },
     subscription_id: {
       type: DataTypes.INTEGER,
-      allowNull: false,
+      allowNull: true,
       defaultValue: 0
     },
     subscription_expiry: {
       type: DataTypes.DATE,
       allowNull: true
     },
-    gender: {
-      type: DataTypes.TINYINT,
-      allowNull: false,
-      defaultValue: 1
-    },
     deleted_at: {
       type: DataTypes.DATE,
       allowNull: true
-    },
-    created_at: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: sequelize.literal('CURRENT_TIMESTAMP')
-    },
-    updated_at: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: sequelize.literal('CURRENT_TIMESTAMP')
     }
   }, {
     tableName: 'service_providers',
     timestamps: true,
-    paranoid: true,   // for soft deletes using `deleted_at`
-    underscored: true // because your columns are like `created_at`, `updated_at`
+    createdAt: 'created_at',
+    updatedAt: 'updated_at',
+    paranoid: true,
+    deletedAt: 'deleted_at'
   });
 
   ServiceProvider.associate = function(models) {
+    // Association with User
+    ServiceProvider.belongsTo(models.User, {
+      foreignKey: 'user_id',
+      as: 'user'
+    });
+
+    // Association with Country
     ServiceProvider.belongsTo(models.Country, {
       foreignKey: 'country_id',
       as: 'country'
     });
 
+    // Association with City
     ServiceProvider.belongsTo(models.City, {
       foreignKey: 'city_id',
       as: 'city'
     });
 
-    ServiceProvider.hasOne(models.ServiceProviderDetail, {
+    // Note: subscription_id is now a simple integer field for tracking subscription status
+
+    // Association with BankDetails
+    ServiceProvider.hasOne(models.BankDetails, {
       foreignKey: 'service_provider_id',
-      as: 'serviceProviderDetail'
+      as: 'bankDetails'
     });
 
+    // Association with ServiceProviderAvailability
     ServiceProvider.hasMany(models.ServiceProviderAvailability, {
       foreignKey: 'service_provider_id',
-      as: 'serviceProviderAvailability'
+      as: 'availability'
     });
+
+    // Association with ServiceList
+    ServiceProvider.hasMany(models.ServiceList, {
+      foreignKey: 'service_provider_id',
+      as: 'services'
+    });
+
+    // Association with Gallery
+    ServiceProvider.hasMany(models.Gallery, {
+      foreignKey: 'service_provider_id',
+      as: 'gallery'
+    });
+
+    // Note: Booking and Transaction models will be added when they are created
   };
 
   return ServiceProvider;
