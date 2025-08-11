@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const ProviderResources = require("./provider.resources");
+const UserResources = require("../users/user.resources");
 const ResponseHelper = require("../../helpers/response.helpers");
 const { genrateToken } = require("../../helpers/jwtToken.helpers");
 const { Op } = require("sequelize");
@@ -17,6 +18,7 @@ const s3 = new AWS.S3({
 
 const response = new ResponseHelper();
 const providerResources = new ProviderResources();
+const userResources = new UserResources();
 
 // Models
 const User = db.models.User;
@@ -58,7 +60,7 @@ module.exports = class ProviderController {
         password: hashedPassword,
         terms_and_condition: data.terms_and_condition || 1,
         gender: data.gender,
-        country_id: data.country_id || 1, // Default to first country if not provided
+        country_id: data.country_id || 1, // Default to first country if not provider
         city_id: data.city_id || 1, // Default to first city if not provided
         is_verified: 0,
         status: 1, // User account is active by default
@@ -69,7 +71,7 @@ module.exports = class ProviderController {
       // Step 2: Create OTP using the user's phone number (not provider ID)
       try {
         const otpRecord = await OtpVerification.createForEntity(
-          "user",
+          "provider",
           user.id,
           data.phone_code + data.phone_number,
           "registration"
@@ -121,7 +123,7 @@ module.exports = class ProviderController {
       }
 
       const verificationResult = await OtpVerification.verifyForEntity(
-        "user",
+        "provider",
         user.id,
         String(data.otp),
         "registration"
@@ -178,7 +180,7 @@ module.exports = class ProviderController {
    */
   async resendOtp(req, res) {
     console.log("ProviderController@resendOtp");
-    const data = req.query;
+    const data = req.body;
 
     try {
       // Find user by user_id (no ServiceProvider exists yet)
@@ -190,7 +192,7 @@ module.exports = class ProviderController {
 
       try {
         const otpRecord = await OtpVerification.createForEntity(
-          "user",
+          "provider",
           user.id,
           user.phone_code + user.phone_number,
           "registration"
@@ -223,52 +225,8 @@ module.exports = class ProviderController {
     }
   }
 
-  /**
-   * Create provider profile for authenticated provider
-   */
-  async createProviderProfile(req, res) {
-    console.log("ProviderController@createProviderProfile");
-    const data = req.body;
-    const userId = req.user.id; // From auth middleware (only user exists, no provider yet)
 
-    try {
-      // Check if user already has a provider profile
-      const existingProvider = await ServiceProvider.findOne({
-        where: { user_id: userId },
-      });
 
-      if (existingProvider) {
-        return response.conflict("Provider profile already exists for this user", res);
-      }
-
-      // Create new provider profile
-      const providerData = {
-        user_id: userId,
-        provider_type: data.provider_type || "individual",
-        salon_name: data.salon_name || null,
-        description: data.description || null,
-        location: data.location || null,
-        latitude: data.latitude || null,
-        longitude: data.longitude || null,
-        country_id: data.country_id || null,
-        city_id: data.city_id || null,
-        banner_image: data.banner_image || null,
-        step_completed: 1,
-        is_approved: 0,
-        is_available: 1,
-      };
-
-      const provider = await ServiceProvider.create(providerData);
-
-      return response.success("Provider profile created successfully", res, {
-        provider: provider,
-        next_step: "document_upload",
-      });
-    } catch (error) {
-      console.error("Error creating provider profile:", error);
-      return response.exception(error.message, res);
-    }
-  }
 
   /**
    * Provider authentication (login)
@@ -276,11 +234,26 @@ module.exports = class ProviderController {
   async authenticate(req, res) {
     try {
       console.log("ProviderController@authenticate");
-      const serviceProvider = req.provider;
-      const user = req.user; // User information from middleware
+      const user = req.user; // User information from middleware (phone, password auth)
 
       // Check if user is verified
       if (!user.is_verified) {
+        // Generate OTP and set it in database (hardcoded as 1111 for now)
+        try {
+          const otpRecord = await OtpVerification.createForEntity(
+            "provider",
+            user.id,
+            user.phone_code + user.phone_number,
+            "registration"
+          );
+          console.log("Provider User OTP created for unverified user:", {
+            otp_code: otpRecord.otp_code,
+            expires_at: otpRecord.expires_at,
+          });
+        } catch (error) {
+          console.error("Error creating provider user OTP:", error);
+        }
+
         return response.validationError('Please verify your account first', res, {
           verification_required: true,
           message: 'Your account needs to be verified before you can login'
@@ -288,17 +261,54 @@ module.exports = class ProviderController {
       }
 
       // Check if provider profile exists
+      const serviceProvider = await ServiceProvider.findOne({
+        where: { user_id: user.id }
+      });
+
       if (!serviceProvider) {
-        return response.validationError('Please create your provider profile first', res, {
+        // Generate token with user data and let them create profile
+        const userObj = {
+          user_id: user.id,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          userType: "provider",
+        };
+
+        const accessToken = await genrateToken(userObj);
+        const result = {
+          access_token: accessToken,
+          user: {
+            user_id: user.id,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            full_name: user.full_name,
+            email: user.email,
+            phone_code: user.phone_code,
+            phone_number: user.phone_number,
+            verified_at: user.verified_at,
+          },
           profile_required: true,
-          message: 'You need to create your provider profile before you can access the app'
-        });
+          message: 'Please create your provider profile to continue'
+        };
+
+        return response.success("Login successful. Please create your provider profile.", res, result);
       }
 
       // Check profile completion status
       if (serviceProvider.step_completed < 6) {
         console.log(`🔍 Provider ${serviceProvider.id}: Step ${serviceProvider.step_completed}/6 incomplete`);
+        
+        // Generate token even for incomplete steps so user can complete them
+        const userObj = {
+          user_id: user.id,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          userType: "provider",
+        };
+
+        const accessToken = await genrateToken(userObj);
         return response.validationError('Please complete your profile setup first', res, {
+          access_token: accessToken,
           setup_required: true,
           current_step: serviceProvider.step_completed,
           total_steps: 6,
@@ -309,24 +319,32 @@ module.exports = class ProviderController {
       // Check if profile is approved by admin (only if steps are completed)
       if (serviceProvider.step_completed === 6 && serviceProvider.is_approved !== 1) {
         console.log(`🔍 Provider ${serviceProvider.id}: Steps complete but not approved by admin`);
+        
+        // Generate token even for unapproved profiles so user can check status
+        const userObj = {
+          user_id: user.id,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          userType: "provider",
+        };
+
+        const accessToken = await genrateToken(userObj);
         return response.validationError('Wait for the admin to verify your profile', res, {
+          access_token: accessToken,
           approval_required: true,
           message: 'Your profile is complete and under review by admin. You will be notified once approved.'
         });
       }
 
-      // All checks passed - generate token and login
-      const serviceProviderObj = {
-        id: serviceProvider.id,
+      // All checks passed - generate token with user model data
+      const userObj = {
         user_id: user.id,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
-        provider_type: serviceProvider.provider_type,
-        step_completed: serviceProvider.step_completed,
         userType: "provider",
       };
 
-      const accessToken = await genrateToken(serviceProviderObj);
+      const accessToken = await genrateToken(userObj);
       const result = {
         access_token: accessToken,
         service_provider: {
@@ -367,30 +385,18 @@ module.exports = class ProviderController {
     console.log("ProviderController@forgotPassword");
     const data = req.body;
 
-    // Find user first (since providers are now linked to users)
+    // Find user by phone number (no need to find ServiceProvider)
     const user = await User.findOne({
       where: {
         phone_code: data.phone_code,
         phone_number: data.phone_number,
+        user_type: "provider", // Ensure it's a provider user
       },
     });
 
     if (!user) {
       return response.badRequest(
-        "No account found with this phone number",
-        res,
-        false
-      );
-    }
-
-    // Find associated service provider
-    const serviceProvider = await ServiceProvider.findOne({
-      where: { user_id: user.id },
-    });
-
-    if (!serviceProvider) {
-      return response.badRequest(
-        "Provider profile not found for this user",
+        "No provider account found with this phone number",
         res,
         false
       );
@@ -399,7 +405,7 @@ module.exports = class ProviderController {
     try {
       const otpRecord = await OtpVerification.createForEntity(
         "provider",
-        serviceProvider.id,
+        user.id, // Use user.id instead of serviceProvider.id
         data.phone_code + data.phone_number,
         "password_reset"
       );
@@ -409,9 +415,9 @@ module.exports = class ProviderController {
     }
 
     const result = {
-      id: serviceProvider.id,
-      phone_code: serviceProvider.phone_code,
-      phone_number: serviceProvider.phone_number,
+      user_id: user.id,
+      phone_code: user.phone_code,
+      phone_number: user.phone_number,
     };
 
     return response.success(
@@ -427,17 +433,18 @@ module.exports = class ProviderController {
   async verifyForgotPasswordOtp(req, res) {
     console.log("ProviderController@verifyForgotPasswordOtp");
     const data = req.body;
-    const serviceProvider = await providerResources.findOne({
-      id: data.provider_id,
-    });
+    
+    // Find user by user_id (no need to find ServiceProvider)
+    const user = await User.findByPk(data.user_id);
 
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
+    if (!user) {
+      return response.badRequest("User account not found", res, false);
     }
 
+    // Verify OTP against user (not serviceProvider)
     const verificationResult = await OtpVerification.verifyForEntity(
       "provider",
-      serviceProvider.id,
+      user.id, // Use user.id instead of serviceProvider.id
       String(data.otp),
       "password_reset"
     );
@@ -447,7 +454,7 @@ module.exports = class ProviderController {
     }
 
     const result = {
-      id: serviceProvider.id,
+      user_id: user.id,
     };
 
     return response.success(
@@ -463,19 +470,15 @@ module.exports = class ProviderController {
   async resetPassword(req, res) {
     console.log("ProviderController@resetPassword");
     const data = req.body;
-    const serviceProvider = await ServiceProvider.findByPk(data.provider_id);
+    
+    // Find user directly by user_id (no need to find ServiceProvider)
+    const user = await User.findByPk(data.user_id);
 
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
-    }
-
-    // Find the associated user
-    const user = await User.findByPk(serviceProvider.user_id);
     if (!user) {
       return response.badRequest("User account not found", res, false);
     }
 
-    // Update password in user table (since password is stored in users table now)
+    // Update password directly in user table
     const hashedPassword = bcrypt.hashSync(data.password, 10);
     await user.update({ password: hashedPassword });
 
@@ -941,43 +944,7 @@ module.exports = class ProviderController {
   /**
    * Verify OTP for password reset
    */
-  async verifyForgotPasswordOtp(req, res) {
-    console.log("ProviderController@verifyForgotPasswordOtp");
-    const data = req.body;
-    const serviceProvider = await providerResources.findOne({
-      id: data.provider_id,
-    });
 
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
-    }
-
-    // Verify OTP using the new system
-    const verificationResult = await OtpVerification.verifyForEntity(
-      "provider",
-      serviceProvider.id,
-      String(data.otp),
-      "password_reset"
-    );
-
-    if (!verificationResult.success) {
-      return response.badRequest(verificationResult.message, res, false);
-    }
-
-    console.log("Provider password reset OTP verified successfully");
-
-    const provider = serviceProvider; // Use existing provider data
-
-    const result = {
-      id: provider.id,
-    };
-
-    return response.success(
-      "OTP verified successfully. You can now reset your password.",
-      res,
-      result
-    );
-  }
 
   /**
    * Get paginated list of all providers with filtering options
@@ -1530,4 +1497,133 @@ module.exports = class ProviderController {
       return response.exception(error.message, res);
     }
   }
-};
+
+  /**
+   * Step 1: Subscription Payment
+   * Mock payment that always returns true and creates/updates ServiceProvider with subscription details
+   */
+  async step1SubscriptionPayment(req, res) {
+    console.log("ProviderController@step1SubscriptionPayment");
+    console.log("Request body:", req.body);
+    
+    try {
+      // Get user_id from authenticated user (from token)
+      const userId = req.user.id;
+      console.log("User ID from token:", userId);
+
+      // Generate random subscription ID (6 digits)
+      const subscriptionId = Math.floor(100000 + Math.random() * 900000);
+      
+      // Set subscription expiry to 1 year from now
+      const subscriptionExpiry = new Date();
+      subscriptionExpiry.setFullYear(subscriptionExpiry.getFullYear() + 1);
+
+      // Find or create ServiceProvider record
+      let serviceProvider = await ServiceProvider.findOne({
+        where: { user_id: userId }
+      });
+
+      if (serviceProvider) {
+        // Update existing ServiceProvider
+        await serviceProvider.update({
+          subscription_id: subscriptionId,
+          subscription_expiry: subscriptionExpiry,
+          step_completed: 1 // Mark step 1 as completed
+        });
+      } else {
+        // Create new ServiceProvider
+        serviceProvider = await ServiceProvider.create({
+          user_id: userId,
+          provider_type: 'individual', // Default value
+          subscription_id: subscriptionId,
+          subscription_expiry: subscriptionExpiry,
+          step_completed: 1 // Mark step 1 as completed
+        });
+      }
+
+      const result = {
+        user_id: userId,
+        service_provider_id: serviceProvider.id,
+        subscription_id: subscriptionId,
+        subscription_expiry: subscriptionExpiry,
+        step_completed: 1,
+        payment_status: "success",
+        message: "Subscription payment successful"
+      };
+
+      return response.success(
+        "Step 1 completed: Subscription payment successful",
+        res,
+        result
+      );
+
+    } catch (error) {
+      console.error("Error in step1SubscriptionPayment:", error);
+      return response.exception("Failed to process subscription payment", res);
+    }
+  }
+
+  /**
+   * Step 2: Set Provider Type (Individual or Salon)
+   */
+  async step2ProviderType(req, res) {
+    console.log("ProviderController@step2ProviderType");
+    const data = req.body;
+
+    try {
+      // Get user_id from authenticated user (from token)
+      const userId = req.user.id;
+
+      // Find ServiceProvider record
+      let serviceProvider = await ServiceProvider.findOne({
+        where: { user_id: userId }
+      });
+
+      if (!serviceProvider) {
+        return response.badRequest("ServiceProvider record not found. Please complete Step 1 first.", res, false);
+      }
+
+      // Check if step 1 is completed
+      if (serviceProvider.step_completed < 1) {
+        return response.badRequest("Please complete Step 1 (Subscription Payment) first", res, false);
+      }
+
+      // Check if step 2 is already completed
+      if (serviceProvider.step_completed >= 2) {
+        return response.badRequest("Step 2 (Provider Type) is already completed", res, false);
+      }
+
+      // Update ServiceProvider with provider type and salon name (if applicable)
+      const updateData = {
+        provider_type: data.provider_type,
+        step_completed: 2 // Mark step 2 as completed
+      };
+
+      // Add salon name if provider type is salon
+      if (data.provider_type === 'salon' && data.salon_name) {
+        updateData.salon_name = data.salon_name;
+      }
+
+      await serviceProvider.update(updateData);
+
+      const result = {
+        user_id: userId,
+        service_provider_id: serviceProvider.id,
+        provider_type: data.provider_type,
+        salon_name: data.provider_type === 'salon' ? data.salon_name : null,
+        step_completed: 2,
+        message: "Provider type set successfully"
+      };
+
+      return response.success(
+        "Step 2 completed: Provider type set successfully",
+        res,
+        result
+      );
+
+    } catch (error) {
+      console.error("Error in step2ProviderType:", error);
+      return response.exception("Failed to set provider type", res);
+    }
+  }
+}
