@@ -22,7 +22,9 @@ RUN apk add --no-cache \
 COPY package.json pnpm-lock.yaml ./
 RUN corepack enable && \
     corepack prepare pnpm@10.12.4 --activate && \
-    pnpm install --frozen-lockfile --prod
+    pnpm install --frozen-lockfile --prod && \
+    pnpm approve-builds --yes && \
+    pnpm rebuild bcrypt aws-sdk
 
 # Copy the rest of the application code
 COPY . .
