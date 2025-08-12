@@ -2,31 +2,39 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.createTable('cities', {
+    await queryInterface.createTable('banner_images', {
       id: {
         type: Sequelize.INTEGER,
         autoIncrement: true,
         primaryKey: true,
         allowNull: false
       },
-      name: {
+      title: {
         type: Sequelize.STRING,
         allowNull: false
       },
-      country_id: {
-        type: Sequelize.INTEGER,
-        allowNull: false,
-        references: {
-          model: 'countries',
-          key: 'id'
-        },
-        onUpdate: 'CASCADE',
-        onDelete: 'CASCADE'
+      image_url: {
+        type: Sequelize.STRING,
+        allowNull: false
       },
-      status: {
+      thumbnail_url: {
+        type: Sequelize.STRING,
+        allowNull: true
+      },
+      category: {
+        type: Sequelize.STRING,
+        allowNull: true,
+        comment: 'Category of banner (e.g., salon, spa, beauty)'
+      },
+      is_active: {
         type: Sequelize.TINYINT,
         allowNull: false,
         defaultValue: 1
+      },
+      sort_order: {
+        type: Sequelize.INTEGER,
+        allowNull: false,
+        defaultValue: 0
       },
       created_at: {
         type: Sequelize.DATE,
@@ -43,9 +51,14 @@ module.exports = {
         allowNull: true
       }
     });
+
+    // Add indexes
+    await queryInterface.addIndex('banner_images', ['is_active']);
+    await queryInterface.addIndex('banner_images', ['category']);
+    await queryInterface.addIndex('banner_images', ['sort_order']);
   },
 
   down: async (queryInterface, Sequelize) => {
-    await queryInterface.dropTable('cities');
+    await queryInterface.dropTable('banner_images');
   }
 };

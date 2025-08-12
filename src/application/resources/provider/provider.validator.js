@@ -733,12 +733,7 @@ module.exports = class ProviderValidator {
     try {
       // Define validation schema for provider type
       let schema = {
-        provider_type: joi.string().valid('individual', 'salon').required(),
-        salon_name: joi.string().when('provider_type', {
-          is: 'salon',
-          then: joi.required(),
-          otherwise: joi.optional()
-        })
+        provider_type: joi.string().valid('individual', 'salon').required()
       };
 
       // Validate request body against schema
@@ -764,6 +759,105 @@ module.exports = class ProviderValidator {
       // Check if step 2 is already completed
       if (serviceProvider.step_completed >= 2) {
         return response.validationError("Step 2 (Provider Type) is already completed", res, false);
+      }
+
+      next();
+    } catch (err) {
+      console.error("Validation Error: ", err);
+      return response.exception("Server error occurred", res);
+    }
+  }
+
+  /**
+   * Validates Step 3: Salon Details request
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware function
+   */
+  async step3SalonDetails(req, res, next) {
+    console.log("ProviderValidator@step3SalonDetails");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    console.log("Request files:", req.files ? Object.keys(req.files) : 'No files');
+    try {
+      // Handle string to number conversion for city_id and country_id (for form-data compatibility)
+      if (req.body.city_id && typeof req.body.city_id === 'string') {
+        req.body.city_id = parseInt(req.body.city_id, 10);
+      }
+      if (req.body.country_id && typeof req.body.country_id === 'string') {
+        req.body.country_id = parseInt(req.body.country_id, 10);
+      }
+      if (req.body.banner_image_id && typeof req.body.banner_image_id === 'string') {
+        req.body.banner_image_id = parseInt(req.body.banner_image_id, 10);
+      }
+
+      // Define validation schema for salon details
+      let schema = {
+        salon_name: joi.string().required().min(2).max(100),
+        city_id: joi.number().integer().min(1).required(),
+        country_id: joi.number().integer().min(1).required(),
+        description: joi.string().optional().allow(null, '').max(1000),
+        banner_image_id: joi.number().integer().min(1).optional().allow(null)
+      };
+
+      // Validate request body against schema
+      let errors = await joiHelper.joiValidation(req.body, schema);
+      if (errors) {
+        return response.validationError("invalid request", res, errors[0]);
+      }
+
+      // Check if ServiceProvider exists and step 2 is completed using req.user.id
+      const db = require("../../../startup/model");
+      let serviceProvider = await db.models.ServiceProvider.findOne({
+        where: { user_id: req.user.id }
+      });
+
+      if (!serviceProvider) {
+        return response.validationError("ServiceProvider record not found. Please complete Step 1 first.", res, false);
+      }
+
+      if (serviceProvider.step_completed < 2) {
+        return response.validationError("Please complete Step 2 (Provider Type) first", res, false);
+      }
+
+      // Check if step 3 is already completed
+      if (serviceProvider.step_completed >= 3) {
+        return response.validationError("Step 3 (Salon Details) is already completed", res, false);
+      }
+
+      // Validate city and country exist
+      if (req.body.city_id) {
+        const city = await db.models.City.findByPk(req.body.city_id);
+        if (!city || city.status !== 1) {
+          return response.validationError("Invalid city selected", res, false);
+        }
+      }
+
+      if (req.body.country_id) {
+        const country = await db.models.Country.findByPk(req.body.country_id);
+        if (!country || country.status !== 1) {
+          return response.validationError("Invalid country selected", res, false);
+        }
+      }
+
+      // Validate banner image ID if provided
+      if (req.body.banner_image_id) {
+        const bannerImage = await db.models.BannerImage.findByPk(req.body.banner_image_id);
+        if (!bannerImage || bannerImage.is_active !== 1) {
+          return response.validationError("Invalid banner image selected", res, false);
+        }
+      }
+
+      // Check that either banner_image_id or banner_image file is provided
+      const hasBannerImageId = req.body.banner_image_id && req.body.banner_image_id > 0;
+      const hasBannerImageFile = req.files && req.files.banner_image && req.files.banner_image[0];
+      
+      if (!hasBannerImageId && !hasBannerImageFile) {
+        return response.validationError("Banner image is required. Please provide either a predefined banner image ID or upload a custom banner image", res, false);
+      }
+
+      // If both are provided, prefer the file upload
+      if (hasBannerImageId && hasBannerImageFile) {
+        console.log("Both banner_image_id and banner_image file provided. File upload will take precedence.");
       }
 
       next();

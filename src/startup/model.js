@@ -17,6 +17,7 @@ const ServiceList = require("../application/models/serviceList.model");
 const Gallery = require("../application/models/gallery.model");
 const OtpVerification = require("../application/models/otpVerification.model");
 const BankDetails = require("../application/models/bankDetails.model");
+const BannerImage = require("../application/models/bannerImage.model");
 
 const models = {
   Token: Token(sequelize, Sequelize.DataTypes),
@@ -34,6 +35,7 @@ const models = {
   Gallery: Gallery(sequelize, Sequelize.DataTypes),
   OtpVerification: OtpVerification(sequelize, Sequelize.DataTypes),
   BankDetails: BankDetails(sequelize, Sequelize.DataTypes),
+  BannerImage: BannerImage(sequelize, Sequelize.DataTypes),
 };
 
 Object.values(models)

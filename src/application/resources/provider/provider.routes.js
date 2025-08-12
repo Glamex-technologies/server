@@ -78,6 +78,28 @@ router.post(
   providerController.step2ProviderType
 );
 
+// Get available predefined banner images
+router.get(
+  "/banner-images",
+  [providerAuth],
+  providerController.getBannerImages
+);
+
+// Step 3: Set Salon Details (requires provider authentication)
+router.post(
+  "/step3-salon-details",
+  [
+    providerAuth,
+    upload.fields([
+      { name: "banner_image", maxCount: 1 }
+    ]),
+    providerValidator.step3SalonDetails
+  ],
+  providerController.step3SalonDetails
+);
+
+
+
 // Upload documents with AWS S3
 router.post(
   "/upload-documents",

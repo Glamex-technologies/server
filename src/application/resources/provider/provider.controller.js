@@ -8,6 +8,7 @@ const db = require("../../../startup/model");
 const AWS = require("aws-sdk");
 const multer = require("multer");
 const path = require("path");
+const S3Helper = require("../../helpers/s3Helper.helpers");
 
 // Configure AWS S3
 const s3 = new AWS.S3({
@@ -15,6 +16,9 @@ const s3 = new AWS.S3({
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   region: process.env.AWS_REGION,
 });
+
+// Initialize S3 Helper
+const s3Helper = new S3Helper();
 
 const response = new ResponseHelper();
 const providerResources = new ProviderResources();
@@ -28,6 +32,7 @@ const ServiceProviderAvailability = db.models.ServiceProviderAvailability;
 const Service = db.models.Service;
 const ServiceList = db.models.ServiceList;
 const OtpVerification = db.models.OtpVerification;
+const BannerImage = db.models.BannerImage;
 
 module.exports = class ProviderController {
   /**
@@ -1593,16 +1598,11 @@ module.exports = class ProviderController {
         return response.badRequest("Step 2 (Provider Type) is already completed", res, false);
       }
 
-      // Update ServiceProvider with provider type and salon name (if applicable)
+      // Update ServiceProvider with provider type only
       const updateData = {
         provider_type: data.provider_type,
         step_completed: 2 // Mark step 2 as completed
       };
-
-      // Add salon name if provider type is salon
-      if (data.provider_type === 'salon' && data.salon_name) {
-        updateData.salon_name = data.salon_name;
-      }
 
       await serviceProvider.update(updateData);
 
@@ -1610,7 +1610,6 @@ module.exports = class ProviderController {
         user_id: userId,
         service_provider_id: serviceProvider.id,
         provider_type: data.provider_type,
-        salon_name: data.provider_type === 'salon' ? data.salon_name : null,
         step_completed: 2,
         message: "Provider type set successfully"
       };
@@ -1626,4 +1625,186 @@ module.exports = class ProviderController {
       return response.exception("Failed to set provider type", res);
     }
   }
+
+  /**
+   * Get available predefined banner images
+   */
+  async getBannerImages(req, res) {
+    console.log("ProviderController@getBannerImages");
+
+    try {
+      const bannerImages = await BannerImage.findAll({
+        where: { is_active: 1 },
+        attributes: ['id', 'title', 'image_url', 'thumbnail_url', 'category'],
+        order: [['sort_order', 'ASC'], ['title', 'ASC']]
+      });
+
+      return response.success(
+        "Banner images retrieved successfully",
+        res,
+        { banner_images: bannerImages }
+      );
+    } catch (error) {
+      console.error("Error getting banner images:", error);
+      return response.exception(error.message, res);
+    }
+  }
+
+  /**
+   * Step 3: Set Salon Details (salon name, city, country, description, banner image)
+   */
+  async step3SalonDetails(req, res) {
+    console.log("ProviderController@step3SalonDetails - START");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    console.log("Request files:", req.files ? Object.keys(req.files) : 'No files');
+    if (req.files && req.files.banner_image) {
+      console.log("Banner image file details:", {
+        originalname: req.files.banner_image[0]?.originalname,
+        size: req.files.banner_image[0]?.size,
+        mimetype: req.files.banner_image[0]?.mimetype
+      });
+    }
+    
+    const data = req.body;
+    const files = req.files; // For custom banner image upload
+
+    try {
+      // Get user_id from authenticated user (from token)
+      const userId = req.user.id;
+      console.log("User ID from token:", userId);
+
+      // Find ServiceProvider record
+      let serviceProvider = await ServiceProvider.findOne({
+        where: { user_id: userId }
+      });
+
+      if (!serviceProvider) {
+        return response.badRequest("ServiceProvider record not found. Please complete Step 1 first.", res, false);
+      }
+
+      // Check if step 2 is completed
+      if (serviceProvider.step_completed < 2) {
+        return response.badRequest("Please complete Step 2 (Provider Type) first", res, false);
+      }
+
+      // Check if step 3 is already completed
+      if (serviceProvider.step_completed >= 3) {
+        return response.badRequest("Step 3 (Salon Details) is already completed", res, false);
+      }
+
+      // Validate required fields
+      if (!data.salon_name || !data.city_id || !data.country_id) {
+        return response.badRequest("Salon name, city, and country are required", res, false);
+      }
+
+      // Prepare update data
+      const updateData = {
+        salon_name: data.salon_name,
+        city_id: data.city_id,
+        country_id: data.country_id,
+        description: data.description || null, // Description is optional
+        step_completed: 3
+      };
+
+      // Handle banner image
+      console.log("Starting banner image handling...");
+      let bannerImageUrl = null;
+
+      if (data.banner_image_id) {
+        console.log("Using predefined banner image ID:", data.banner_image_id);
+        // User selected a predefined banner image
+        const bannerImage = await BannerImage.findByPk(data.banner_image_id);
+        console.log("Banner image found:", bannerImage ? 'YES' : 'NO');
+        if (!bannerImage || !bannerImage.is_active) {
+          return response.badRequest("Invalid banner image selected", res, false);
+        }
+        bannerImageUrl = bannerImage.image_url;
+        console.log("Using predefined banner URL:", bannerImageUrl);
+      } else if (files && files.banner_image && files.banner_image[0]) {
+        console.log("Processing custom banner image upload...");
+        // User uploaded a custom banner image
+        const file = files.banner_image[0];
+        console.log("File details:", {
+          originalname: file.originalname,
+          size: file.size,
+          mimetype: file.mimetype,
+          buffer: file.buffer ? 'Buffer exists' : 'No buffer'
+        });
+        
+        // Validate S3 configuration
+        console.log("Validating S3 config...");
+        if (!s3Helper.validateConfig()) {
+          console.log("S3 config validation failed");
+          return response.badRequest("S3 configuration is invalid. Please check AWS credentials and bucket settings.", res, false);
+        }
+
+        console.log("S3 config validation passed");
+
+        // Upload to S3
+        console.log("Starting S3 upload...");
+        const uploadResult = await s3Helper.uploadImage(
+          file.buffer,
+          file.originalname,
+          'providers',
+          `banners/${serviceProvider.id}`,
+          {
+            maxSize: 5 * 1024 * 1024, // 5MB limit for banner images
+            generateThumbnail: true,
+            thumbnailSize: { width: 300, height: 200 },
+            uploadedBy: `provider_${serviceProvider.id}`,
+            originalName: file.originalname
+          }
+        );
+        console.log("S3 upload result:", uploadResult);
+
+        if (!uploadResult.success) {
+          console.log("S3 upload failed:", uploadResult.error);
+          return response.badRequest(`Failed to upload banner image: ${uploadResult.error}`, res, false);
+        }
+
+        bannerImageUrl = uploadResult.main.url;
+        console.log("S3 upload successful, URL:", bannerImageUrl);
+      } else {
+        console.log("No banner image provided - this should not happen");
+        // This should not happen due to validation, but adding as a safety check
+        return response.badRequest("Banner image (either predefined ID or custom upload) is required", res, false);
+      }
+
+      // Update banner image URL
+      updateData.banner_image = bannerImageUrl;
+      console.log("Update data prepared:", updateData);
+
+      // Update ServiceProvider
+      console.log("Updating ServiceProvider...");
+      await serviceProvider.update(updateData);
+      console.log("ServiceProvider updated successfully");
+
+      const result = {
+        user_id: userId,
+        service_provider_id: serviceProvider.id,
+        salon_name: data.salon_name,
+        city_id: data.city_id,
+        country_id: data.country_id,
+        description: data.description || null,
+        banner_image: bannerImageUrl,
+        step_completed: 3,
+        message: "Salon details updated successfully"
+      };
+
+      console.log("Step 3 completed successfully, returning result");
+      return response.success(
+        "Step 3 completed: Salon details updated successfully",
+        res,
+        result
+      );
+
+    } catch (error) {
+      console.error("Error in step3SalonDetails:", error);
+      console.error("Error stack:", error.stack);
+      console.error("Error message:", error.message);
+      return response.exception("Failed to update salon details", res);
+    }
+  }
+
+
 }
