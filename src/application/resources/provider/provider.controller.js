@@ -495,67 +495,201 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Upload documents with AWS S3 integration
+   * Step 4: Upload documents and bank details (mandatory for all providers)
+   * - National ID image (mandatory for both individual and salon)
+   * - Bank details (mandatory for both individual and salon)
+   * - Freelance certificate image (optional for individual, not needed for salon)
+   * - Commercial registration image (mandatory for salon, not needed for individual)
    */
-  async uploadDocuments(req, res) {
-    console.log("ProviderController@uploadDocuments");
-    const provider = req.provider; // From provider auth middleware
+  async step4UploadDocuments(req, res) {
+    console.log("ProviderController@step4UploadDocuments - START");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    console.log("Request files:", req.files ? Object.keys(req.files) : 'No files');
+    
+    const provider = req.provider;
     const files = req.files;
+    const bankDetails = req.body;
 
     try {
+      // Validate required fields based on provider type
+      const errors = [];
+      
+      // National ID is mandatory for both
+      if (!files.national_id_image_url || !files.national_id_image_url[0]) {
+        errors.push("National ID image is required");
+      }
+
+      // Bank details validation
+      if (!bankDetails.account_holder_name) {
+        errors.push("Account holder name is required");
+      }
+      if (!bankDetails.bank_name) {
+        errors.push("Bank name is required");
+      }
+      if (!bankDetails.iban) {
+        errors.push("IBAN is required");
+      }
+
+      // Commercial registration is mandatory for salon
+      if (provider.provider_type === 'salon') {
+        if (!files.commercial_registration_image_url || !files.commercial_registration_image_url[0]) {
+          errors.push("Commercial registration image is required for salon providers");
+        }
+      }
+
+      if (errors.length > 0) {
+        return response.badRequest(errors.join(", "), res, false);
+      }
+
       const uploadPromises = [];
       const documentUrls = {};
 
-      // Define allowed document types
-      const allowedDocuments = [
-        "national_id_image_url",
-        "freelance_certificate_image_url",
-        "commercial_registration_image_url",
-        "banner_image",
-      ];
-
-      // Upload each file to S3
-      for (const fieldName of allowedDocuments) {
-        if (files[fieldName] && files[fieldName][0]) {
-          const file = files[fieldName][0];
-          const fileName = `providers/${
-            provider.id
-          }/${fieldName}_${Date.now()}${path.extname(file.originalname)}`;
-
-          const uploadParams = {
-            Bucket: process.env.AWS_S3_BUCKET,
-            Key: fileName,
-            Body: file.buffer,
-            ContentType: file.mimetype,
-            ACL: "public-read",
-          };
-
-          const uploadPromise = s3
-            .upload(uploadParams)
-            .promise()
-            .then((result) => {
-              documentUrls[fieldName] = result.Location;
-            });
-
-          uploadPromises.push(uploadPromise);
+      // Upload national ID image (mandatory)
+      if (files.national_id_image_url && files.national_id_image_url[0]) {
+        const file = files.national_id_image_url[0];
+        console.log("Processing national ID image upload...");
+        
+        // Validate S3 configuration
+        if (!s3Helper.validateConfig()) {
+          return response.badRequest("S3 configuration is invalid. Please check AWS credentials and bucket settings.", res, false);
         }
-      } 
 
-      await Promise.all(uploadPromises);
+        const uploadResult = await s3Helper.uploadImage(
+          file.buffer,
+          file.originalname,
+          'providers',
+          `documents/${provider.id}`,
+          {
+            maxSize: 5 * 1024 * 1024, // 5MB limit
+            generateThumbnail: true,
+            thumbnailSize: { width: 300, height: 200 },
+            uploadedBy: `provider_${provider.id}`,
+            originalName: file.originalname
+          }
+        );
+
+        if (!uploadResult.success) {
+          return response.badRequest(`Failed to upload national ID image: ${uploadResult.error}`, res, false);
+        }
+
+        documentUrls.national_id_image_url = uploadResult.main.url;
+      }
+
+      // Upload freelance certificate image (optional for individual)
+      if (provider.provider_type === 'individual' && files.freelance_certificate_image_url && files.freelance_certificate_image_url[0]) {
+        const file = files.freelance_certificate_image_url[0];
+        console.log("Processing freelance certificate image upload...");
+        
+        const uploadResult = await s3Helper.uploadImage(
+          file.buffer,
+          file.originalname,
+          'providers',
+          `documents/${provider.id}`,
+          {
+            maxSize: 5 * 1024 * 1024, // 5MB limit
+            generateThumbnail: true,
+            thumbnailSize: { width: 300, height: 200 },
+            uploadedBy: `provider_${provider.id}`,
+            originalName: file.originalname
+          }
+        );
+
+        if (!uploadResult.success) {
+          return response.badRequest(`Failed to upload freelance certificate image: ${uploadResult.error}`, res, false);
+        }
+
+        documentUrls.freelance_certificate_image_url = uploadResult.main.url;
+      }
+
+      // Upload commercial registration image (mandatory for salon)
+      if (provider.provider_type === 'salon' && files.commercial_registration_image_url && files.commercial_registration_image_url[0]) {
+        const file = files.commercial_registration_image_url[0];
+        console.log("Processing commercial registration image upload...");
+        
+        const uploadResult = await s3Helper.uploadImage(
+          file.buffer,
+          file.originalname,
+          'providers',
+          `documents/${provider.id}`,
+          {
+            maxSize: 5 * 1024 * 1024, // 5MB limit
+            generateThumbnail: true,
+            thumbnailSize: { width: 300, height: 200 },
+            uploadedBy: `provider_${provider.id}`,
+            originalName: file.originalname
+          }
+        );
+
+        if (!uploadResult.success) {
+          return response.badRequest(`Failed to upload commercial registration image: ${uploadResult.error}`, res, false);
+        }
+
+        documentUrls.commercial_registration_image_url = uploadResult.main.url;
+      }
+
+      // Create or update bank details
+      let bankDetailsRecord;
+      const existingBankDetails = await BankDetails.findOne({
+        where: { service_provider_id: provider.id }
+      });
+      
+      if (existingBankDetails) {
+        // Update existing bank details
+        await existingBankDetails.update({
+          account_holder_name: bankDetails.account_holder_name,
+          bank_name: bankDetails.bank_name,
+          iban: bankDetails.iban,
+        });
+        bankDetailsRecord = existingBankDetails;
+      } else {
+        // Create new bank details
+        bankDetailsRecord = await BankDetails.create({
+          service_provider_id: provider.id,
+          account_holder_name: bankDetails.account_holder_name,
+          bank_name: bankDetails.bank_name,
+          iban: bankDetails.iban,
+        });
+      }
 
       // Update provider with document URLs
       await provider.update({
         ...documentUrls,
-        step_completed: 2,
+        step_completed: 4,
       });
 
-      return response.success("Documents uploaded successfully", res, {
-        provider: await ServiceProvider.findByPk(provider.id),
-        next_step: "service_setup",
+      // Get updated provider with all details
+      const updatedProvider = await ServiceProvider.findByPk(provider.id, {
+        include: [
+          {
+            model: BankDetails,
+            as: 'bankDetails'
+          }
+        ]
       });
+
+      const responseData = {
+        id: updatedProvider.id,
+        provider_type: updatedProvider.provider_type,
+        national_id_image_url: updatedProvider.national_id_image_url,
+        freelance_certificate_image_url: updatedProvider.freelance_certificate_image_url,
+        commercial_registration_image_url: updatedProvider.commercial_registration_image_url,
+        step_completed: updatedProvider.step_completed,
+        bank_details: updatedProvider.bankDetails && updatedProvider.bankDetails.length > 0 ? {
+          id: updatedProvider.bankDetails[0].id,
+          account_holder_name: updatedProvider.bankDetails[0].account_holder_name,
+          bank_name: updatedProvider.bankDetails[0].bank_name,
+          iban: updatedProvider.bankDetails[0].iban,
+        } : null,
+        next_step: "service_setup"
+      };
+
+      console.log("Step 4 completed successfully, returning result");
+      return response.success("Step 4 completed successfully", res, responseData);
     } catch (error) {
-      console.error("Error uploading documents:", error);
-      return response.exception(error.message, res);
+      console.error("Error in Step 4:", error);
+      console.error("Error stack:", error.stack);
+      console.error("Error message:", error.message);
+      return response.exception("Failed to complete Step 4", res);
     }
   }
 
@@ -1504,7 +1638,7 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Step 1: Subscription Payment
+   * Subscription Payment
    * Mock payment that always returns true and creates/updates ServiceProvider with subscription details
    */
   async step1SubscriptionPayment(req, res) {
@@ -1533,7 +1667,7 @@ module.exports = class ProviderController {
         await serviceProvider.update({
           subscription_id: subscriptionId,
           subscription_expiry: subscriptionExpiry,
-          step_completed: 1 // Mark step 1 as completed
+          step_completed: Math.max(serviceProvider.step_completed, 1) // Keep highest step completed
         });
       } else {
         // Create new ServiceProvider
@@ -1542,7 +1676,7 @@ module.exports = class ProviderController {
           provider_type: 'individual', // Default value
           subscription_id: subscriptionId,
           subscription_expiry: subscriptionExpiry,
-          step_completed: 1 // Mark step 1 as completed
+          step_completed: 1
         });
       }
 
@@ -1551,13 +1685,13 @@ module.exports = class ProviderController {
         service_provider_id: serviceProvider.id,
         subscription_id: subscriptionId,
         subscription_expiry: subscriptionExpiry,
-        step_completed: 1,
+        step_completed: serviceProvider.step_completed,
         payment_status: "success",
         message: "Subscription payment successful"
       };
 
       return response.success(
-        "Step 1 completed: Subscription payment successful",
+        "Subscription payment successful",
         res,
         result
       );
@@ -1569,7 +1703,7 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Step 2: Set Provider Type (Individual or Salon)
+   * Set Provider Type (Individual or Salon)
    */
   async step2ProviderType(req, res) {
     console.log("ProviderController@step2ProviderType");
@@ -1579,43 +1713,36 @@ module.exports = class ProviderController {
       // Get user_id from authenticated user (from token)
       const userId = req.user.id;
 
-      // Find ServiceProvider record
+      // Find or create ServiceProvider record
       let serviceProvider = await ServiceProvider.findOne({
         where: { user_id: userId }
       });
 
       if (!serviceProvider) {
-        return response.badRequest("ServiceProvider record not found. Please complete Step 1 first.", res, false);
+        // Create new ServiceProvider if doesn't exist
+        serviceProvider = await ServiceProvider.create({
+          user_id: userId,
+          provider_type: data.provider_type,
+          step_completed: 2
+        });
+      } else {
+        // Update existing ServiceProvider
+        await serviceProvider.update({
+          provider_type: data.provider_type,
+          step_completed: Math.max(serviceProvider.step_completed, 2) // Keep highest step completed
+        });
       }
-
-      // Check if step 1 is completed
-      if (serviceProvider.step_completed < 1) {
-        return response.badRequest("Please complete Step 1 (Subscription Payment) first", res, false);
-      }
-
-      // Check if step 2 is already completed
-      if (serviceProvider.step_completed >= 2) {
-        return response.badRequest("Step 2 (Provider Type) is already completed", res, false);
-      }
-
-      // Update ServiceProvider with provider type only
-      const updateData = {
-        provider_type: data.provider_type,
-        step_completed: 2 // Mark step 2 as completed
-      };
-
-      await serviceProvider.update(updateData);
 
       const result = {
         user_id: userId,
         service_provider_id: serviceProvider.id,
         provider_type: data.provider_type,
-        step_completed: 2,
+        step_completed: serviceProvider.step_completed,
         message: "Provider type set successfully"
       };
 
       return response.success(
-        "Step 2 completed: Provider type set successfully",
+        "Provider type set successfully",
         res,
         result
       );
@@ -1651,7 +1778,7 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Step 3: Set Salon Details (salon name, city, country, description, banner image)
+   * Set Salon Details (salon name, city, country, description, banner image)
    */
   async step3SalonDetails(req, res) {
     console.log("ProviderController@step3SalonDetails - START");
@@ -1673,38 +1800,45 @@ module.exports = class ProviderController {
       const userId = req.user.id;
       console.log("User ID from token:", userId);
 
-      // Find ServiceProvider record
+      // Find or create ServiceProvider record
       let serviceProvider = await ServiceProvider.findOne({
         where: { user_id: userId }
       });
 
       if (!serviceProvider) {
-        return response.badRequest("ServiceProvider record not found. Please complete Step 1 first.", res, false);
+        // Create new ServiceProvider if doesn't exist
+        serviceProvider = await ServiceProvider.create({
+          user_id: userId,
+          provider_type: 'individual', // Default value
+          step_completed: 3
+        });
       }
 
-      // Check if step 2 is completed
-      if (serviceProvider.step_completed < 2) {
-        return response.badRequest("Please complete Step 2 (Provider Type) first", res, false);
+      // Validate required fields based on provider type
+      if (!data.city_id || !data.country_id) {
+        return response.badRequest("City and country are required", res, false);
       }
 
-      // Check if step 3 is already completed
-      if (serviceProvider.step_completed >= 3) {
-        return response.badRequest("Step 3 (Salon Details) is already completed", res, false);
-      }
-
-      // Validate required fields
-      if (!data.salon_name || !data.city_id || !data.country_id) {
-        return response.badRequest("Salon name, city, and country are required", res, false);
+      // Conditional salon name validation
+      if (serviceProvider.provider_type === 'salon' && !data.salon_name) {
+        return response.badRequest("Salon name is required for salon providers", res, false);
       }
 
       // Prepare update data
       const updateData = {
-        salon_name: data.salon_name,
         city_id: data.city_id,
         country_id: data.country_id,
         description: data.description || null, // Description is optional
-        step_completed: 3
+        step_completed: Math.max(serviceProvider.step_completed, 3) // Keep highest step completed
       };
+
+      // Add salon_name only if provided or if provider type is salon
+      if (data.salon_name) {
+        updateData.salon_name = data.salon_name;
+      } else if (serviceProvider.provider_type === 'salon') {
+        // For salon providers, keep existing salon_name if not provided
+        updateData.salon_name = serviceProvider.salon_name;
+      }
 
       // Handle banner image
       console.log("Starting banner image handling...");
@@ -1782,18 +1916,18 @@ module.exports = class ProviderController {
       const result = {
         user_id: userId,
         service_provider_id: serviceProvider.id,
-        salon_name: data.salon_name,
+        salon_name: updateData.salon_name || null,
         city_id: data.city_id,
         country_id: data.country_id,
         description: data.description || null,
         banner_image: bannerImageUrl,
-        step_completed: 3,
+        step_completed: serviceProvider.step_completed,
         message: "Salon details updated successfully"
       };
 
-      console.log("Step 3 completed successfully, returning result");
+      console.log("Salon details updated successfully, returning result");
       return response.success(
-        "Step 3 completed: Salon details updated successfully",
+        "Salon details updated successfully",
         res,
         result
       );
@@ -1808,3 +1942,4 @@ module.exports = class ProviderController {
 
 
 }
+

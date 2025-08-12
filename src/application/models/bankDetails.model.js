@@ -6,13 +6,14 @@ module.exports = (sequelize, DataTypes) => {
     defaultValue: DataTypes.UUIDV4,
     allowNull: false,
   },
+
   service_provider_id: {
     type: DataTypes.INTEGER,
     allowNull: false,
     references: {
       model: 'service_providers',
-      key: 'id',
-    },
+      key: 'id'
+    }
   },
   account_holder_name: {
     type: DataTypes.STRING(100),
@@ -22,26 +23,9 @@ module.exports = (sequelize, DataTypes) => {
     type: DataTypes.STRING(100),
     allowNull: false,
   },
-  account_number: {
-    type: DataTypes.STRING(50),
-    allowNull: false,
-  },
-  routing_number: {
-    type: DataTypes.STRING(50),
-    allowNull: true,
-  },
   iban: {
     type: DataTypes.STRING(50),
-    allowNull: true,
-  },
-  swift_code: {
-    type: DataTypes.STRING(20),
-    allowNull: true,
-  },
-  is_verified: {
-    type: DataTypes.BOOLEAN,
     allowNull: false,
-    defaultValue: false,
   },
 }, {
   tableName: 'bank_details',

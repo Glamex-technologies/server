@@ -64,16 +64,16 @@ router.post(
   providerController.resetPassword
 );
 
-// Step 1: Subscription Payment (requires provider authentication)
+// Subscription Payment (requires provider authentication)
 router.post(
-  "/step1-subscription-payment",
+  "/subscription-payment",
   [handleEmptyBody, providerAuth, providerValidator.step1SubscriptionPayment],
   providerController.step1SubscriptionPayment
 );
 
-// Step 2: Set Provider Type (requires provider authentication)
+// Set Provider Type (requires provider authentication)
 router.post(
-  "/step2-provider-type",
+  "/provider-type",
   [providerAuth, providerValidator.step2ProviderType],
   providerController.step2ProviderType
 );
@@ -85,9 +85,9 @@ router.get(
   providerController.getBannerImages
 );
 
-// Step 3: Set Salon Details (requires provider authentication)
+// Set Salon Details (requires provider authentication)
 router.post(
-  "/step3-salon-details",
+  "/salon-or-indiviual-detail",
   [
     providerAuth,
     upload.fields([
@@ -100,20 +100,34 @@ router.post(
 
 
 
-// Upload documents with AWS S3
+// Upload documents and bank details
 router.post(
-  "/upload-documents",
+  "/upload-documents-and-bank-details",
   [
     providerAuth,
     upload.fields([
       { name: "national_id_image_url", maxCount: 1 },
       { name: "freelance_certificate_image_url", maxCount: 1 },
       { name: "commercial_registration_image_url", maxCount: 1 },
-      { name: "banner_image", maxCount: 1 },
     ]),
   ],
-  providerController.uploadDocuments
+  providerController.step4UploadDocuments
 );
+
+// Upload documents with AWS S3 (legacy)
+// router.post(
+//   "/upload-documents",
+//   [
+//     providerAuth,
+//     upload.fields([
+//       { name: "national_id_image_url", maxCount: 1 },
+//       { name: "freelance_certificate_image_url", maxCount: 1 },
+//       { name: "commercial_registration_image_url", maxCount: 1 },
+//       { name: "banner_image", maxCount: 1 },
+//     ]),
+//   ],
+//   providerController.uploadDocuments
+// );
 
 // Get available services from master catalog
 router.get(

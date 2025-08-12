@@ -65,6 +65,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true
     },
+
     freelance_certificate_image_url: {
       type: DataTypes.STRING,
       allowNull: true
@@ -161,7 +162,7 @@ module.exports = (sequelize, DataTypes) => {
     // Note: subscription_id is now a simple integer field for tracking subscription status
 
     // Association with BankDetails
-    ServiceProvider.hasOne(models.BankDetails, {
+    ServiceProvider.hasMany(models.BankDetails, {
       foreignKey: 'service_provider_id',
       as: 'bankDetails'
     });

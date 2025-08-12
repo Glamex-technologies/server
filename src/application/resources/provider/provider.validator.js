@@ -769,7 +769,7 @@ module.exports = class ProviderValidator {
   }
 
   /**
-   * Validates Step 3: Salon Details request
+   * Validates Salon Details request
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    * @param {Function} next - Express next middleware function
@@ -790,38 +790,31 @@ module.exports = class ProviderValidator {
         req.body.banner_image_id = parseInt(req.body.banner_image_id, 10);
       }
 
-      // Define validation schema for salon details
+      // Get ServiceProvider to check provider type for conditional validation
+      const db = require("../../../startup/model");
+      let serviceProvider = await db.models.ServiceProvider.findOne({
+        where: { user_id: req.user.id }
+      });
+
+      // Define validation schema for salon details (conditional salon_name)
       let schema = {
-        salon_name: joi.string().required().min(2).max(100),
         city_id: joi.number().integer().min(1).required(),
         country_id: joi.number().integer().min(1).required(),
         description: joi.string().optional().allow(null, '').max(1000),
         banner_image_id: joi.number().integer().min(1).optional().allow(null)
       };
 
+      // Add conditional salon_name validation
+      if (serviceProvider && serviceProvider.provider_type === 'salon') {
+        schema.salon_name = joi.string().required().min(2).max(100);
+      } else {
+        schema.salon_name = joi.string().optional().allow(null, '').min(2).max(100);
+      }
+
       // Validate request body against schema
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
         return response.validationError("invalid request", res, errors[0]);
-      }
-
-      // Check if ServiceProvider exists and step 2 is completed using req.user.id
-      const db = require("../../../startup/model");
-      let serviceProvider = await db.models.ServiceProvider.findOne({
-        where: { user_id: req.user.id }
-      });
-
-      if (!serviceProvider) {
-        return response.validationError("ServiceProvider record not found. Please complete Step 1 first.", res, false);
-      }
-
-      if (serviceProvider.step_completed < 2) {
-        return response.validationError("Please complete Step 2 (Provider Type) first", res, false);
-      }
-
-      // Check if step 3 is already completed
-      if (serviceProvider.step_completed >= 3) {
-        return response.validationError("Step 3 (Salon Details) is already completed", res, false);
       }
 
       // Validate city and country exist
