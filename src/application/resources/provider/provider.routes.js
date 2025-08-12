@@ -18,7 +18,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // Middleware to handle empty JSON bodies
 const handleEmptyBody = (req, res, next) => {
-  if (req.headers['content-type'] === 'application/json' && (!req.body || Object.keys(req.body).length === 0)) {
+  if (
+    req.headers["content-type"] === "application/json" &&
+    (!req.body || Object.keys(req.body).length === 0)
+  ) {
     req.body = {};
   }
   next();
@@ -90,15 +93,11 @@ router.post(
   "/salon-or-indiviual-detail",
   [
     providerAuth,
-    upload.fields([
-      { name: "banner_image", maxCount: 1 }
-    ]),
-    providerValidator.step3SalonDetails
+    upload.fields([{ name: "banner_image", maxCount: 1 }]),
+    providerValidator.step3SalonDetails,
   ],
   providerController.step3SalonDetails
 );
-
-
 
 // Upload documents and bank details
 router.post(
@@ -112,6 +111,13 @@ router.post(
     ]),
   ],
   providerController.step4UploadDocuments
+);
+
+// Step 5: Set working days and hours
+router.post(
+  "/working-days-and-hours",
+  [providerAuth],
+  providerController.step5WorkingHours
 );
 
 // Upload documents with AWS S3 (legacy)
@@ -140,17 +146,20 @@ router.get(
 router.get("/locations", [providerAuth], providerController.getLocations);
 
 // Setup services for provider
-router.post("/setup-services", [providerAuth], providerController.setupServices);
-
-// Set availability schedule
 router.post(
-  "/set-availability",
+  "/setup-services",
   [providerAuth],
-  providerController.setAvailability
+  providerController.setupServices
 );
 
+
+
 // Set bank details
-router.post("/set-bank-details", [providerAuth], providerController.setBankDetails);
+router.post(
+  "/set-bank-details",
+  [providerAuth],
+  providerController.setBankDetails
+);
 
 // Set simple subscription (one-time payment)
 router.post(

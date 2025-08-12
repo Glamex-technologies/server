@@ -1008,7 +1008,122 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Set provider's availability schedule
+   * Step 5: Set working days and hours for provider
+   * This is the final step in the provider onboarding process
+   */
+  async step5WorkingHours(req, res) {
+    console.log("ProviderController@step5WorkingHours - START");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    
+    const provider = req.provider;
+    const availabilityData = req.body.availability;
+
+    try {
+      // Validate required fields
+      if (!availabilityData || !Array.isArray(availabilityData) || availabilityData.length === 0) {
+        return response.badRequest("Availability data is required and must be an array", res, false);
+      }
+
+      // Validate each availability record
+      const errors = [];
+      const daysOfWeek = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      
+      availabilityData.forEach((item, index) => {
+        if (!item.day) {
+          errors.push(`Day is required for availability record ${index + 1}`);
+        } else if (!daysOfWeek.includes(item.day.toLowerCase())) {
+          errors.push(`Invalid day '${item.day}' for availability record ${index + 1}`);
+        }
+        
+        if (!item.from_time) {
+          errors.push(`From time is required for ${item.day}`);
+        }
+        
+        if (!item.to_time) {
+          errors.push(`To time is required for ${item.day}`);
+        }
+        
+        // Validate time format (HH:MM)
+        const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (item.from_time && !timeRegex.test(item.from_time)) {
+          errors.push(`Invalid from_time format for ${item.day}. Use HH:MM format`);
+        }
+        if (item.to_time && !timeRegex.test(item.to_time)) {
+          errors.push(`Invalid to_time format for ${item.day}. Use HH:MM format`);
+        }
+        
+        // Validate time range
+        if (item.from_time && item.to_time) {
+          const fromTime = new Date(`2000-01-01T${item.from_time}:00`);
+          const toTime = new Date(`2000-01-01T${item.to_time}:00`);
+          if (fromTime >= toTime) {
+            errors.push(`From time must be before to time for ${item.day}`);
+          }
+        }
+      });
+
+      if (errors.length > 0) {
+        return response.badRequest(errors.join(", "), res, false);
+      }
+
+      // Delete existing availability records for this provider
+      await ServiceProviderAvailability.destroy({
+        where: { service_provider_id: provider.id }
+      });
+
+      // Create new availability records
+      const availabilityRecords = availabilityData.map(item => ({
+        service_provider_id: provider.id,
+        day: item.day.toLowerCase(),
+        from_time: item.from_time,
+        to_time: item.to_time,
+        available: item.available !== undefined ? item.available : 1
+      }));
+
+      await ServiceProviderAvailability.bulkCreate(availabilityRecords);
+
+      // Update provider step completion
+      await provider.update({
+        step_completed: 5,
+      });
+
+      // Get updated provider with availability details
+      const updatedProvider = await ServiceProvider.findByPk(provider.id, {
+        include: [
+          {
+            model: ServiceProviderAvailability,
+            as: 'availability'
+          }
+        ]
+      });
+
+      const responseData = {
+        id: updatedProvider.id,
+        step_completed: updatedProvider.step_completed,
+        availability: updatedProvider.availability.map(avail => ({
+          id: avail.id,
+          day: avail.day,
+          from_time: avail.from_time,
+          to_time: avail.to_time,
+          available: avail.available
+        })),
+        next_step: "setup_services",
+        message: "Working hours set successfully. Next step: Setup services"
+      };
+
+      console.log("Step 5 completed successfully, returning result");
+      return response.success("Step 5 completed successfully", res, responseData);
+
+    } catch (error) {
+      console.error("Error in Step 5:", error);
+      console.error("Error stack:", error.stack);
+      console.error("Error message:", error.message);
+      return response.exception("Failed to complete Step 5", res);
+    }
+  }
+
+  /**
+   * Set provider's availability schedule (legacy method)
    */
   async setAvailability(req, res) {
     console.log("ProviderController@setAvailability");
