@@ -1735,7 +1735,7 @@ module.exports = class ProviderController {
         include: [
           {
             model: db.models.City,
-            as: "cities",
+            as: "city",
             where: { status: 1 },
             required: false,
           },
