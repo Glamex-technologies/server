@@ -16,10 +16,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: false
     },
-    service_id: {
-      type: DataTypes.INTEGER,
-      allowNull: false
-    },
+
     category_id: {
       type: DataTypes.INTEGER,
       allowNull: false
@@ -85,11 +82,6 @@ module.exports = (sequelize, DataTypes) => {
     ServiceList.belongsTo(models.ServiceProvider, {
       foreignKey: 'service_provider_id',
       as: 'serviceProvider'
-    });
-
-    ServiceList.belongsTo(models.Service, {
-      foreignKey: 'service_id',
-      as: 'service'
     });
 
     ServiceList.belongsTo(models.Category, {

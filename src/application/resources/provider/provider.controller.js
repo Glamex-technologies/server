@@ -33,6 +33,7 @@ const Service = db.models.Service;
 const ServiceList = db.models.ServiceList;
 const OtpVerification = db.models.OtpVerification;
 const BannerImage = db.models.BannerImage;
+const ServiceImage = db.models.ServiceImage;
 
 module.exports = class ProviderController {
   /**
@@ -700,13 +701,7 @@ module.exports = class ProviderController {
     console.log("ProviderController@getAvailableServices");
 
     try {
-      const services = await Service.findAll({
-        where: { status: 1 }, // Only active services
-        attributes: ["id", "title", "image"],
-        order: [["title", "ASC"]],
-      });
-
-      // Also get categories and subcategories for service setup
+      // Get categories with their subcategories for service setup
       const categories = await db.models.Category.findAll({
         where: { status: 1 },
         include: [
@@ -715,34 +710,53 @@ module.exports = class ProviderController {
             as: "subcategories",
             where: { status: 1 },
             required: false,
+            attributes: ["id", "title", "image"],
           },
         ],
-        order: [["name", "ASC"]],
+        attributes: ["id", "title", "image"],
+        order: [["title", "ASC"]],
       });
 
       return response.success(
+        "Available categories and subcategories retrieved successfully",
         res,
-        "Available services retrieved successfully",
         {
-          services: services,
           categories: categories,
         }
       );
     } catch (error) {
-      console.error("Error getting available services:", error);
+      console.error("Error getting available categories:", error);
       return response.exception(error.message, res);
     }
   }
 
   /**
-   * Setup services for the provider
+   * Setup services for the provider (Step 6)
    */
   async setupServices(req, res) {
-    console.log("ProviderController@setupServices");
+    console.log("ProviderController@setupServices - Step 6");
+    const user = req.user; // From provider auth middleware
     const provider = req.provider; // From provider auth middleware
     const { services } = req.body;
+    const uploadedFiles = req.files; // Multer uploaded files
 
     try {
+      // Get user_id from authenticated user (from token)
+      const userId = user.id;
+      console.log("User ID from token:", userId);
+
+      // Find or create ServiceProvider record
+      let serviceProvider = provider;
+      if (!serviceProvider) {
+        console.log("No provider profile found, creating one...");
+        serviceProvider = await ServiceProvider.create({
+          user_id: userId,
+          provider_type: 'individual', // Default value
+          step_completed: 6 // Skip to step 6 for service setup
+        });
+        console.log("Provider profile created with ID:", serviceProvider.id);
+      }
+
       // Validate that services array is provided
       if (!services || !Array.isArray(services) || services.length === 0) {
         return response.badRequest("Services array is required", res);
@@ -750,19 +764,78 @@ module.exports = class ProviderController {
 
       // Delete existing service lists for this provider
       await ServiceList.destroy({
-        where: { service_provider_id: provider.id },
+        where: { service_provider_id: serviceProvider.id },
       });
 
       // Create new service lists
-      const servicePromises = services.map((serviceData) => {
+      const servicePromises = services.map(async (serviceData, index) => {
+        let serviceImageUrl = null;
+
+        // Handle service image - check for predefined image ID first
+        if (serviceData.service_image_id) {
+          console.log("Using predefined service image ID:", serviceData.service_image_id);
+          // User selected a predefined service image
+          const serviceImage = await ServiceImage.findByPk(serviceData.service_image_id);
+          console.log("Service image found:", serviceImage ? 'YES' : 'NO');
+          if (!serviceImage || !serviceImage.is_active) {
+            return response.badRequest("Invalid service image selected", res, false);
+          }
+          serviceImageUrl = serviceImage.image_url;
+          console.log("Using predefined service image URL:", serviceImageUrl);
+        } else if (uploadedFiles && uploadedFiles.service_images && uploadedFiles.service_images[index]) {
+          // Handle file upload from multer using S3 like in step 3
+          console.log("Processing custom service image upload (file)...");
+          const file = uploadedFiles.service_images[index];
+          console.log("File details:", {
+            originalname: file.originalname,
+            size: file.size,
+            mimetype: file.mimetype,
+            buffer: file.buffer ? 'Buffer exists' : 'No buffer'
+          });
+          
+          // Validate S3 configuration
+          console.log("Validating S3 config...");
+          if (!s3Helper.validateConfig()) {
+            console.log("S3 config validation failed");
+            return response.badRequest("S3 configuration is invalid. Please check AWS credentials and bucket settings.", res, false);
+          }
+
+          console.log("S3 config validation passed");
+
+          // Upload to S3 using the same method as step 3
+          console.log("Starting S3 upload...");
+          const uploadResult = await s3Helper.uploadImage(
+            file.buffer,
+            file.originalname,
+            'providers',
+            `service-images/${serviceProvider.id}`,
+            {
+              maxSize: 5 * 1024 * 1024, // 5MB limit for service images
+              generateThumbnail: true,
+              thumbnailSize: { width: 300, height: 200 },
+              uploadedBy: `provider_${provider.id}`,
+              originalName: file.originalname
+            }
+          );
+          console.log("S3 upload result:", uploadResult);
+
+          if (!uploadResult.success) {
+            console.log("S3 upload failed:", uploadResult.error);
+            return response.badRequest(`Failed to upload service image: ${uploadResult.error}`, res, false);
+          }
+
+          serviceImageUrl = uploadResult.main.url;
+          console.log("S3 upload successful, URL:", serviceImageUrl);
+        }
+
         return ServiceList.create({
-          service_provider_id: provider.id,
-          service_id: serviceData.service_id,
+          service_provider_id: serviceProvider.id,
           category_id: serviceData.category_id,
           sub_category_id: serviceData.sub_category_id || null,
           title: serviceData.title || null,
           price: serviceData.price,
           description: serviceData.description || null,
+          service_image: serviceImageUrl,
           service_location: serviceData.service_location || 1,
           is_sub_service: serviceData.is_sub_service || 0,
           have_offers: serviceData.have_offers || 0,
@@ -770,15 +843,34 @@ module.exports = class ProviderController {
         });
       });
 
-      await Promise.all(servicePromises);
+      const createdServices = await Promise.all(servicePromises);
 
-      await provider.update({
-        step_completed: 3,
+      await serviceProvider.update({
+        step_completed: 6,
+      });
+
+      // Get the created services with category and subcategory details
+      const servicesWithDetails = await ServiceList.findAll({
+        where: { service_provider_id: serviceProvider.id },
+        include: [
+          {
+            model: db.models.Category,
+            as: 'category',
+            attributes: ['id', 'title', 'image']
+          },
+          {
+            model: db.models.SubCategory,
+            as: 'subcategory',
+            attributes: ['id', 'title', 'image']
+          }
+        ],
+        order: [['created_at', 'DESC']]
       });
 
       return response.success("Services setup successfully", res, {
-        provider: await ServiceProvider.findByPk(provider.id),
-        next_step: "availability_setup",
+        provider: await ServiceProvider.findByPk(serviceProvider.id),
+        services: servicesWithDetails,
+        next_step: "profile_complete",
       });
     } catch (error) {
       console.error("Error setting up services:", error);
@@ -1888,6 +1980,30 @@ module.exports = class ProviderController {
       );
     } catch (error) {
       console.error("Error getting banner images:", error);
+      return response.exception(error.message, res);
+    }
+  }
+
+  /**
+   * Get available predefined service images
+   */
+  async getServiceImages(req, res) {
+    console.log("ProviderController@getServiceImages");
+
+    try {
+      const serviceImages = await ServiceImage.findAll({
+        where: { is_active: 1 },
+        attributes: ['id', 'title', 'image_url', 'thumbnail_url', 'category'],
+        order: [['sort_order', 'ASC'], ['title', 'ASC']]
+      });
+
+      return response.success(
+        "Service images retrieved successfully",
+        res,
+        { service_images: serviceImages }
+      );
+    } catch (error) {
+      console.error("Error getting service images:", error);
       return response.exception(error.message, res);
     }
   }

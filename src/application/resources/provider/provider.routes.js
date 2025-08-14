@@ -88,6 +88,13 @@ router.get(
   providerController.getBannerImages
 );
 
+// Get available predefined service images
+router.get(
+  "/service-images",
+  [providerAuth],
+  providerController.getServiceImages
+);
+
 // Set Salon Details (requires provider authentication)
 router.post(
   "/salon-or-indiviual-detail",
@@ -148,7 +155,12 @@ router.get("/locations", [providerAuth], providerController.getLocations);
 // Setup services for provider
 router.post(
   "/setup-services",
-  [providerAuth],
+  [
+    providerAuth,
+    upload.fields([
+      { name: "service_images", maxCount: 10 } // Allow multiple service images
+    ])
+  ],
   providerController.setupServices
 );
 
