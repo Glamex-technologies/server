@@ -832,13 +832,13 @@ module.exports = class ProviderController {
           service_provider_id: serviceProvider.id,
           category_id: serviceData.category_id,
           sub_category_id: serviceData.sub_category_id || null,
-          title: serviceData.title || null,
+          title: serviceData.title || null, // Optional - can use category title
           price: serviceData.price,
-          description: serviceData.description || null,
+          description: serviceData.description || null, // Optional
           service_image: serviceImageUrl,
-          service_location: serviceData.service_location || 1,
-          is_sub_service: serviceData.is_sub_service || 0,
-          have_offers: serviceData.have_offers || 0,
+          service_location: serviceData.service_location || 1, // Default to 1 if not provided
+          is_sub_service: serviceData.is_sub_service || 0, // Optional - default to 0
+          have_offers: serviceData.have_offers || 0, // Optional - default to 0
           status: 1,
         });
       });
@@ -849,7 +849,7 @@ module.exports = class ProviderController {
         step_completed: 6,
       });
 
-      // Get the created services with category and subcategory details
+      // Get the created services with category, subcategory, and location details
       const servicesWithDetails = await ServiceList.findAll({
         where: { service_provider_id: serviceProvider.id },
         include: [
@@ -862,6 +862,11 @@ module.exports = class ProviderController {
             model: db.models.SubCategory,
             as: 'subcategory',
             attributes: ['id', 'title', 'image']
+          },
+          {
+            model: db.models.ServiceLocation,
+            as: 'location',
+            attributes: ['id', 'title', 'description']
           }
         ],
         order: [['created_at', 'DESC']]
@@ -2004,6 +2009,30 @@ module.exports = class ProviderController {
       );
     } catch (error) {
       console.error("Error getting service images:", error);
+      return response.exception(error.message, res);
+    }
+  }
+
+  /**
+   * Get available service locations
+   */
+  async getServiceLocations(req, res) {
+    console.log("ProviderController@getServiceLocations");
+
+    try {
+      const serviceLocations = await db.models.ServiceLocation.findAll({
+        where: { status: 1 },
+        attributes: ['id', 'title', 'description'],
+        order: [['title', 'ASC']]
+      });
+
+      return response.success(
+        "Service locations retrieved successfully",
+        res,
+        { service_locations: serviceLocations }
+      );
+    } catch (error) {
+      console.error("Error getting service locations:", error);
       return response.exception(error.message, res);
     }
   }

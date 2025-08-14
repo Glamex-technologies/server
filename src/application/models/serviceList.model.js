@@ -45,7 +45,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     service_location: {
-      type: DataTypes.TINYINT,
+      type: DataTypes.INTEGER,
       allowNull: false,
       defaultValue: 1
     },
@@ -92,6 +92,11 @@ module.exports = (sequelize, DataTypes) => {
     ServiceList.belongsTo(models.SubCategory, {
       foreignKey: 'sub_category_id',
       as: 'subcategory'
+    });
+
+    ServiceList.belongsTo(models.ServiceLocation, {
+      foreignKey: 'service_location',
+      as: 'location'
     });
   };
 

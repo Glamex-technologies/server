@@ -95,6 +95,13 @@ router.get(
   providerController.getServiceImages
 );
 
+// Get available service locations
+router.get(
+  "/service-locations",
+  [providerAuth],
+  providerController.getServiceLocations
+);
+
 // Set Salon Details (requires provider authentication)
 router.post(
   "/salon-or-indiviual-detail",
