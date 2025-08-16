@@ -42,22 +42,17 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   Service.associate = function(models) {
-    // Example: Service has many ServiceLists
+    // Master Service has many Categories
     Service.hasMany(models.Category, {
       foreignKey: 'service_id',
       as: 'categories'
     });
 
-    Service.hasMany(models.SubCategory, {
+    // Master Service has many ServiceLists (for direct service offerings)
+    Service.hasMany(models.ServiceList, {
       foreignKey: 'service_id',
-      as: 'subcategories'
+      as: 'serviceLists'
     });
-
-
-    // Service.hasMany(models.ServiceList, {
-    //   foreignKey: 'service_id',
-    //   as: 'serviceLists'
-    // });
   };
 
   return Service;

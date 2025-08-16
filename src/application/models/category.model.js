@@ -11,7 +11,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: false
     },
-
+    service_id: {
+      type: DataTypes.INTEGER,
+      allowNull: false
+    },
     status: {
       type: DataTypes.TINYINT,
       allowNull: false,
@@ -43,13 +46,19 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   Category.associate = function(models) {
-    // Categories have many subcategories
-    Category.hasMany(models.SubCategory, {
+    // Category belongs to a Master Service
+    Category.belongsTo(models.Service, {
+      foreignKey: 'service_id',
+      as: 'service'
+    });
+
+    // Category has many SubCategories
+    Category.hasMany(models.subcategory, {
       foreignKey: 'category_id',
       as: 'subcategories'
     });
 
-    // Categories have many service lists
+    // Category has many ServiceLists
     Category.hasMany(models.ServiceList, {
       foreignKey: 'category_id',
       as: 'serviceLists'

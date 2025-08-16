@@ -1,4 +1,5 @@
 'use strict';
+
 module.exports = (sequelize, DataTypes) => {
   const SubCategory = sequelize.define('SubCategory', {
     id: {
@@ -15,7 +16,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: false
     },
-    service_id: {
+    category_id: {
       type: DataTypes.INTEGER,
       allowNull: false
     },
@@ -28,6 +29,16 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: 1
     },
+    created_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: sequelize.literal('CURRENT_TIMESTAMP')
+    },
+    updated_at: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: sequelize.literal('CURRENT_TIMESTAMP')
+    },
     deleted_at: {
       type: DataTypes.DATE,
       allowNull: true
@@ -35,7 +46,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     tableName: 'subcategories',
     timestamps: true,
-    paranoid: true, // Enables soft deletes using deletedAt
+    paranoid: true,
     underscored: true
   });
 
@@ -50,11 +61,11 @@ module.exports = (sequelize, DataTypes) => {
       as: 'category'
     });
 
-    // SubCategory.hasMany(models.ServiceList, {
-    //   foreignKey: 'subcategoryId',
-    //   as: 'serviceLists'
-    // });
+    SubCategory.hasMany(models.ServiceList, {
+      foreignKey: 'sub_category_id',
+      as: 'serviceLists'
+    });
   };
 
   return SubCategory;
-};
+}; 

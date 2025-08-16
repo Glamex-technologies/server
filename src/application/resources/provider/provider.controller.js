@@ -701,16 +701,25 @@ module.exports = class ProviderController {
     console.log("ProviderController@getAvailableServices");
 
     try {
-      // Get categories with their subcategories for service setup
-      const categories = await db.models.Category.findAll({
+      // Get services with their categories and subcategories for proper hierarchy
+      const services = await db.models.Service.findAll({
         where: { status: 1 },
         include: [
           {
-            model: db.models.SubCategory,
-            as: "subcategories",
+            model: db.models.Category,
+            as: "categories",
             where: { status: 1 },
             required: false,
             attributes: ["id", "title", "image"],
+            include: [
+              {
+                model: db.models.subcategory,
+                as: "subcategories",
+                where: { status: 1 },
+                required: false,
+                attributes: ["id", "title", "image"],
+              },
+            ],
           },
         ],
         attributes: ["id", "title", "image"],
@@ -718,14 +727,14 @@ module.exports = class ProviderController {
       });
 
       return response.success(
-        "Available categories and subcategories retrieved successfully",
+        "Available services, categories and subcategories retrieved successfully",
         res,
         {
-          categories: categories,
+          services: services,
         }
       );
     } catch (error) {
-      console.error("Error getting available categories:", error);
+      console.error("Error getting available services:", error);
       return response.exception(error.message, res);
     }
   }
@@ -830,6 +839,7 @@ module.exports = class ProviderController {
 
         return ServiceList.create({
           service_provider_id: serviceProvider.id,
+          service_id: serviceData.service_id, // Add service_id for proper hierarchy
           category_id: serviceData.category_id,
           sub_category_id: serviceData.sub_category_id || null,
           title: serviceData.title || null, // Optional - can use category title
@@ -859,7 +869,7 @@ module.exports = class ProviderController {
             attributes: ['id', 'title', 'image']
           },
           {
-            model: db.models.SubCategory,
+            model: db.models.subcategory,
             as: 'subcategory',
             attributes: ['id', 'title', 'image']
           },

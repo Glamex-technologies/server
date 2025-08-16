@@ -29,7 +29,7 @@ const models = {
   Admin: Admin(sequelize, Sequelize.DataTypes),
   Service: Service(sequelize, Sequelize.DataTypes),
   Category: Category(sequelize, Sequelize.DataTypes),
-  SubCategory: SubCategory(sequelize, Sequelize.DataTypes),
+  subcategory: SubCategory(sequelize, Sequelize.DataTypes),
   ServiceProvider: ServiceProvider(sequelize, Sequelize.DataTypes),
   ServiceProviderAvailability : ServiceProviderAvailability(sequelize, Sequelize.DataTypes),
   User: User(sequelize, Sequelize.DataTypes),
