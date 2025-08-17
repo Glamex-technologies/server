@@ -12,11 +12,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true
     },
-    service_provider_id: {
+    service_id: {
       type: DataTypes.INTEGER,
       allowNull: false
     },
-    service_id: {
+    service_provider_id: {
       type: DataTypes.INTEGER,
       allowNull: false
     },
@@ -48,7 +48,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     },
     service_location: {
-      type: DataTypes.TINYINT,
+      type: DataTypes.INTEGER,
       allowNull: false,
       defaultValue: 1
     },
@@ -82,14 +82,15 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   ServiceList.associate = function(models) {
-    ServiceList.belongsTo(models.ServiceProvider, {
-      foreignKey: 'service_provider_id',
-      as: 'serviceProvider'
-    });
-
+    // ServiceList belongs to a Master Service
     ServiceList.belongsTo(models.Service, {
       foreignKey: 'service_id',
       as: 'service'
+    });
+
+    ServiceList.belongsTo(models.ServiceProvider, {
+      foreignKey: 'service_provider_id',
+      as: 'serviceProvider'
     });
 
     ServiceList.belongsTo(models.Category, {
@@ -97,9 +98,14 @@ module.exports = (sequelize, DataTypes) => {
       as: 'category'
     });
 
-    ServiceList.belongsTo(models.SubCategory, {
+    ServiceList.belongsTo(models.subcategory, {
       foreignKey: 'sub_category_id',
       as: 'subcategory'
+    });
+
+    ServiceList.belongsTo(models.ServiceLocation, {
+      foreignKey: 'service_location',
+      as: 'location'
     });
   };
 

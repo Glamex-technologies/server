@@ -46,21 +46,23 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   Category.associate = function(models) {
+    // Category belongs to a Master Service
     Category.belongsTo(models.Service, {
       foreignKey: 'service_id',
       as: 'service'
     });
 
-    // Example: categories have many subcategories
-    Category.hasMany(models.SubCategory, {
+    // Category has many SubCategories
+    Category.hasMany(models.subcategory, {
       foreignKey: 'category_id',
       as: 'subcategories'
     });
 
-    // Category.hasMany(models.ServiceList, {
-    //     foreignKey: 'category_id',
-    //     as: 'serviceLists'
-    // });
+    // Category has many ServiceLists
+    Category.hasMany(models.ServiceList, {
+      foreignKey: 'category_id',
+      as: 'serviceLists'
+    });
   };
 
   return Category;

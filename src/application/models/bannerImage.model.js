@@ -1,6 +1,7 @@
 'use strict';
+
 module.exports = (sequelize, DataTypes) => {
-  const Service = sequelize.define('Service', {
+  const BannerImage = sequelize.define('BannerImage', {
     id: {
       type: DataTypes.INTEGER,
       autoIncrement: true,
@@ -11,14 +12,28 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: false
     },
-    image: {
+    image_url: {
+      type: DataTypes.STRING,
+      allowNull: false
+    },
+    thumbnail_url: {
       type: DataTypes.STRING,
       allowNull: true
     },
-    status: {
+    category: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      comment: 'Category of banner (e.g., salon, spa, beauty)'
+    },
+    is_active: {
       type: DataTypes.TINYINT,
       allowNull: false,
       defaultValue: 1
+    },
+    sort_order: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0
     },
     created_at: {
       type: DataTypes.DATE,
@@ -35,25 +50,12 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true
     }
   }, {
-    tableName: 'services',
+    tableName: 'banner_images',
     timestamps: false,
     underscored: true,
     paranoid: true,
+    deletedAt: 'deleted_at'
   });
 
-  Service.associate = function(models) {
-    // Master Service has many Categories
-    Service.hasMany(models.Category, {
-      foreignKey: 'service_id',
-      as: 'categories'
-    });
-
-    // Master Service has many ServiceLists (for direct service offerings)
-    Service.hasMany(models.ServiceList, {
-      foreignKey: 'service_id',
-      as: 'serviceLists'
-    });
-  };
-
-  return Service;
+  return BannerImage;
 };

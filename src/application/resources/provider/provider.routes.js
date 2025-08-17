@@ -18,7 +18,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // Middleware to handle empty JSON bodies
 const handleEmptyBody = (req, res, next) => {
-  if (req.headers['content-type'] === 'application/json' && (!req.body || Object.keys(req.body).length === 0)) {
+  if (
+    req.headers["content-type"] === "application/json" &&
+    (!req.body || Object.keys(req.body).length === 0)
+  ) {
     req.body = {};
   }
   next();
@@ -64,34 +67,87 @@ router.post(
   providerController.resetPassword
 );
 
-// Step 1: Subscription Payment (requires provider authentication)
+// Subscription Payment (requires provider authentication)
 router.post(
-  "/step1-subscription-payment",
+  "/subscription-payment",
   [handleEmptyBody, providerAuth, providerValidator.step1SubscriptionPayment],
   providerController.step1SubscriptionPayment
 );
 
-// Step 2: Set Provider Type (requires provider authentication)
+// Set Provider Type (requires provider authentication)
 router.post(
-  "/step2-provider-type",
+  "/provider-type",
   [providerAuth, providerValidator.step2ProviderType],
   providerController.step2ProviderType
 );
 
-// Upload documents with AWS S3
+// Get available predefined banner images
+router.get(
+  "/banner-images",
+  [providerAuth],
+  providerController.getBannerImages
+);
+
+// Get available predefined service images
+router.get(
+  "/service-images",
+  [providerAuth],
+  providerController.getServiceImages
+);
+
+// Get available service locations
+router.get(
+  "/service-locations",
+  [providerAuth],
+  providerController.getServiceLocations
+);
+
+// Set Salon Details (requires provider authentication)
 router.post(
-  "/upload-documents",
+  "/salon-or-indiviual-detail",
+  [
+    providerAuth,
+    upload.fields([{ name: "banner_image", maxCount: 1 }]),
+    providerValidator.step3SalonDetails,
+  ],
+  providerController.step3SalonDetails
+);
+
+// Upload documents and bank details
+router.post(
+  "/upload-documents-and-bank-details",
   [
     providerAuth,
     upload.fields([
       { name: "national_id_image_url", maxCount: 1 },
       { name: "freelance_certificate_image_url", maxCount: 1 },
       { name: "commercial_registration_image_url", maxCount: 1 },
-      { name: "banner_image", maxCount: 1 },
     ]),
   ],
-  providerController.uploadDocuments
+  providerController.step4UploadDocuments
 );
+
+// Step 5: Set working days and hours
+router.post(
+  "/working-days-and-hours",
+  [providerAuth],
+  providerController.step5WorkingHours
+);
+
+// Upload documents with AWS S3 (legacy)
+// router.post(
+//   "/upload-documents",
+//   [
+//     providerAuth,
+//     upload.fields([
+//       { name: "national_id_image_url", maxCount: 1 },
+//       { name: "freelance_certificate_image_url", maxCount: 1 },
+//       { name: "commercial_registration_image_url", maxCount: 1 },
+//       { name: "banner_image", maxCount: 1 },
+//     ]),
+//   ],
+//   providerController.uploadDocuments
+// );
 
 // Get available services from master catalog
 router.get(
@@ -104,17 +160,25 @@ router.get(
 router.get("/locations", [providerAuth], providerController.getLocations);
 
 // Setup services for provider
-router.post("/setup-services", [providerAuth], providerController.setupServices);
-
-// Set availability schedule
 router.post(
-  "/set-availability",
-  [providerAuth],
-  providerController.setAvailability
+  "/setup-services",
+  [
+    providerAuth,
+    upload.fields([
+      { name: "service_images", maxCount: 10 } // Allow multiple service images
+    ])
+  ],
+  providerController.setupServices
 );
 
+
+
 // Set bank details
-router.post("/set-bank-details", [providerAuth], providerController.setBankDetails);
+router.post(
+  "/set-bank-details",
+  [providerAuth],
+  providerController.setBankDetails
+);
 
 // Set simple subscription (one-time payment)
 router.post(

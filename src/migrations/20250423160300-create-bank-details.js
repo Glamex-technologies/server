@@ -26,28 +26,13 @@ module.exports = {
       bank_name: {
         type: Sequelize.STRING(100),
         allowNull: false,
-      },
-      account_number: {
-        type: Sequelize.STRING(50),
-        allowNull: false,
-      },
-      routing_number: {
-        type: Sequelize.STRING(50),
-        allowNull: true,
-      },
+      },    
       iban: {
         type: Sequelize.STRING(50),
-        allowNull: true,
-      },
-      swift_code: {
-        type: Sequelize.STRING(20),
-        allowNull: true,
-      },
-      is_verified: {
-        type: Sequelize.BOOLEAN,
         allowNull: false,
-        defaultValue: false,
       },
+      
+     
       created_at: {
         type: Sequelize.DATE,
         allowNull: false,

@@ -8,6 +8,7 @@ const db = require("../../../startup/model");
 const AWS = require("aws-sdk");
 const multer = require("multer");
 const path = require("path");
+const S3Helper = require("../../helpers/s3Helper.helpers");
 
 // Configure AWS S3
 const s3 = new AWS.S3({
@@ -15,6 +16,9 @@ const s3 = new AWS.S3({
   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   region: process.env.AWS_REGION,
 });
+
+// Initialize S3 Helper
+const s3Helper = new S3Helper();
 
 const response = new ResponseHelper();
 const providerResources = new ProviderResources();
@@ -28,6 +32,8 @@ const ServiceProviderAvailability = db.models.ServiceProviderAvailability;
 const Service = db.models.Service;
 const ServiceList = db.models.ServiceList;
 const OtpVerification = db.models.OtpVerification;
+const BannerImage = db.models.BannerImage;
+const ServiceImage = db.models.ServiceImage;
 
 module.exports = class ProviderController {
   /**
@@ -490,67 +496,201 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Upload documents with AWS S3 integration
+   * Step 4: Upload documents and bank details (mandatory for all providers)
+   * - National ID image (mandatory for both individual and salon)
+   * - Bank details (mandatory for both individual and salon)
+   * - Freelance certificate image (optional for individual, not needed for salon)
+   * - Commercial registration image (mandatory for salon, not needed for individual)
    */
-  async uploadDocuments(req, res) {
-    console.log("ProviderController@uploadDocuments");
-    const provider = req.provider; // From provider auth middleware
+  async step4UploadDocuments(req, res) {
+    console.log("ProviderController@step4UploadDocuments - START");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    console.log("Request files:", req.files ? Object.keys(req.files) : 'No files');
+    
+    const provider = req.provider;
     const files = req.files;
+    const bankDetails = req.body;
 
     try {
+      // Validate required fields based on provider type
+      const errors = [];
+      
+      // National ID is mandatory for both
+      if (!files.national_id_image_url || !files.national_id_image_url[0]) {
+        errors.push("National ID image is required");
+      }
+
+      // Bank details validation
+      if (!bankDetails.account_holder_name) {
+        errors.push("Account holder name is required");
+      }
+      if (!bankDetails.bank_name) {
+        errors.push("Bank name is required");
+      }
+      if (!bankDetails.iban) {
+        errors.push("IBAN is required");
+      }
+
+      // Commercial registration is mandatory for salon
+      if (provider.provider_type === 'salon') {
+        if (!files.commercial_registration_image_url || !files.commercial_registration_image_url[0]) {
+          errors.push("Commercial registration image is required for salon providers");
+        }
+      }
+
+      if (errors.length > 0) {
+        return response.badRequest(errors.join(", "), res, false);
+      }
+
       const uploadPromises = [];
       const documentUrls = {};
 
-      // Define allowed document types
-      const allowedDocuments = [
-        "national_id_image_url",
-        "freelance_certificate_image_url",
-        "commercial_registration_image_url",
-        "banner_image",
-      ];
-
-      // Upload each file to S3
-      for (const fieldName of allowedDocuments) {
-        if (files[fieldName] && files[fieldName][0]) {
-          const file = files[fieldName][0];
-          const fileName = `providers/${
-            provider.id
-          }/${fieldName}_${Date.now()}${path.extname(file.originalname)}`;
-
-          const uploadParams = {
-            Bucket: process.env.AWS_S3_BUCKET,
-            Key: fileName,
-            Body: file.buffer,
-            ContentType: file.mimetype,
-            ACL: "public-read",
-          };
-
-          const uploadPromise = s3
-            .upload(uploadParams)
-            .promise()
-            .then((result) => {
-              documentUrls[fieldName] = result.Location;
-            });
-
-          uploadPromises.push(uploadPromise);
+      // Upload national ID image (mandatory)
+      if (files.national_id_image_url && files.national_id_image_url[0]) {
+        const file = files.national_id_image_url[0];
+        console.log("Processing national ID image upload...");
+        
+        // Validate S3 configuration
+        if (!s3Helper.validateConfig()) {
+          return response.badRequest("S3 configuration is invalid. Please check AWS credentials and bucket settings.", res, false);
         }
-      } 
 
-      await Promise.all(uploadPromises);
+        const uploadResult = await s3Helper.uploadImage(
+          file.buffer,
+          file.originalname,
+          'providers',
+          `documents/${provider.id}`,
+          {
+            maxSize: 5 * 1024 * 1024, // 5MB limit
+            generateThumbnail: true,
+            thumbnailSize: { width: 300, height: 200 },
+            uploadedBy: `provider_${provider.id}`,
+            originalName: file.originalname
+          }
+        );
+
+        if (!uploadResult.success) {
+          return response.badRequest(`Failed to upload national ID image: ${uploadResult.error}`, res, false);
+        }
+
+        documentUrls.national_id_image_url = uploadResult.main.url;
+      }
+
+      // Upload freelance certificate image (optional for individual)
+      if (provider.provider_type === 'individual' && files.freelance_certificate_image_url && files.freelance_certificate_image_url[0]) {
+        const file = files.freelance_certificate_image_url[0];
+        console.log("Processing freelance certificate image upload...");
+        
+        const uploadResult = await s3Helper.uploadImage(
+          file.buffer,
+          file.originalname,
+          'providers',
+          `documents/${provider.id}`,
+          {
+            maxSize: 5 * 1024 * 1024, // 5MB limit
+            generateThumbnail: true,
+            thumbnailSize: { width: 300, height: 200 },
+            uploadedBy: `provider_${provider.id}`,
+            originalName: file.originalname
+          }
+        );
+
+        if (!uploadResult.success) {
+          return response.badRequest(`Failed to upload freelance certificate image: ${uploadResult.error}`, res, false);
+        }
+
+        documentUrls.freelance_certificate_image_url = uploadResult.main.url;
+      }
+
+      // Upload commercial registration image (mandatory for salon)
+      if (provider.provider_type === 'salon' && files.commercial_registration_image_url && files.commercial_registration_image_url[0]) {
+        const file = files.commercial_registration_image_url[0];
+        console.log("Processing commercial registration image upload...");
+        
+        const uploadResult = await s3Helper.uploadImage(
+          file.buffer,
+          file.originalname,
+          'providers',
+          `documents/${provider.id}`,
+          {
+            maxSize: 5 * 1024 * 1024, // 5MB limit
+            generateThumbnail: true,
+            thumbnailSize: { width: 300, height: 200 },
+            uploadedBy: `provider_${provider.id}`,
+            originalName: file.originalname
+          }
+        );
+
+        if (!uploadResult.success) {
+          return response.badRequest(`Failed to upload commercial registration image: ${uploadResult.error}`, res, false);
+        }
+
+        documentUrls.commercial_registration_image_url = uploadResult.main.url;
+      }
+
+      // Create or update bank details
+      let bankDetailsRecord;
+      const existingBankDetails = await BankDetails.findOne({
+        where: { service_provider_id: provider.id }
+      });
+      
+      if (existingBankDetails) {
+        // Update existing bank details
+        await existingBankDetails.update({
+          account_holder_name: bankDetails.account_holder_name,
+          bank_name: bankDetails.bank_name,
+          iban: bankDetails.iban,
+        });
+        bankDetailsRecord = existingBankDetails;
+      } else {
+        // Create new bank details
+        bankDetailsRecord = await BankDetails.create({
+          service_provider_id: provider.id,
+          account_holder_name: bankDetails.account_holder_name,
+          bank_name: bankDetails.bank_name,
+          iban: bankDetails.iban,
+        });
+      }
 
       // Update provider with document URLs
       await provider.update({
         ...documentUrls,
-        step_completed: 2,
+        step_completed: 4,
       });
 
-      return response.success("Documents uploaded successfully", res, {
-        provider: await ServiceProvider.findByPk(provider.id),
-        next_step: "service_setup",
+      // Get updated provider with all details
+      const updatedProvider = await ServiceProvider.findByPk(provider.id, {
+        include: [
+          {
+            model: BankDetails,
+            as: 'bankDetails'
+          }
+        ]
       });
+
+      const responseData = {
+        id: updatedProvider.id,
+        provider_type: updatedProvider.provider_type,
+        national_id_image_url: updatedProvider.national_id_image_url,
+        freelance_certificate_image_url: updatedProvider.freelance_certificate_image_url,
+        commercial_registration_image_url: updatedProvider.commercial_registration_image_url,
+        step_completed: updatedProvider.step_completed,
+        bank_details: updatedProvider.bankDetails && updatedProvider.bankDetails.length > 0 ? {
+          id: updatedProvider.bankDetails[0].id,
+          account_holder_name: updatedProvider.bankDetails[0].account_holder_name,
+          bank_name: updatedProvider.bankDetails[0].bank_name,
+          iban: updatedProvider.bankDetails[0].iban,
+        } : null,
+        next_step: "service_setup"
+      };
+
+      console.log("Step 4 completed successfully, returning result");
+      return response.success("Step 4 completed successfully", res, responseData);
     } catch (error) {
-      console.error("Error uploading documents:", error);
-      return response.exception(error.message, res);
+      console.error("Error in Step 4:", error);
+      console.error("Error stack:", error.stack);
+      console.error("Error message:", error.message);
+      return response.exception("Failed to complete Step 4", res);
     }
   }
 
@@ -561,32 +701,36 @@ module.exports = class ProviderController {
     console.log("ProviderController@getAvailableServices");
 
     try {
-      const services = await Service.findAll({
-        where: { status: 1 }, // Only active services
+      // Get services with their categories and subcategories for proper hierarchy
+      const services = await db.models.Service.findAll({
+        where: { status: 1 },
+        include: [
+          {
+            model: db.models.Category,
+            as: "categories",
+            where: { status: 1 },
+            required: false,
+            attributes: ["id", "title", "image"],
+            include: [
+              {
+                model: db.models.subcategory,
+                as: "subcategories",
+                where: { status: 1 },
+                required: false,
+                attributes: ["id", "title", "image"],
+              },
+            ],
+          },
+        ],
         attributes: ["id", "title", "image"],
         order: [["title", "ASC"]],
       });
 
-      // Also get categories and subcategories for service setup
-      const categories = await db.models.Category.findAll({
-        where: { status: 1 },
-        include: [
-          {
-            model: db.models.SubCategory,
-            as: "subcategories",
-            where: { status: 1 },
-            required: false,
-          },
-        ],
-        order: [["name", "ASC"]],
-      });
-
       return response.success(
+        "Available services, categories and subcategories retrieved successfully",
         res,
-        "Available services retrieved successfully",
         {
           services: services,
-          categories: categories,
         }
       );
     } catch (error) {
@@ -596,14 +740,32 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Setup services for the provider
+   * Setup services for the provider (Step 6)
    */
   async setupServices(req, res) {
-    console.log("ProviderController@setupServices");
+    console.log("ProviderController@setupServices - Step 6");
+    const user = req.user; // From provider auth middleware
     const provider = req.provider; // From provider auth middleware
     const { services } = req.body;
+    const uploadedFiles = req.files; // Multer uploaded files
 
     try {
+      // Get user_id from authenticated user (from token)
+      const userId = user.id;
+      console.log("User ID from token:", userId);
+
+      // Find or create ServiceProvider record
+      let serviceProvider = provider;
+      if (!serviceProvider) {
+        console.log("No provider profile found, creating one...");
+        serviceProvider = await ServiceProvider.create({
+          user_id: userId,
+          provider_type: 'individual', // Default value
+          step_completed: 6 // Skip to step 6 for service setup
+        });
+        console.log("Provider profile created with ID:", serviceProvider.id);
+      }
+
       // Validate that services array is provided
       if (!services || !Array.isArray(services) || services.length === 0) {
         return response.badRequest("Services array is required", res);
@@ -611,35 +773,119 @@ module.exports = class ProviderController {
 
       // Delete existing service lists for this provider
       await ServiceList.destroy({
-        where: { service_provider_id: provider.id },
+        where: { service_provider_id: serviceProvider.id },
       });
 
       // Create new service lists
-      const servicePromises = services.map((serviceData) => {
+      const servicePromises = services.map(async (serviceData, index) => {
+        let serviceImageUrl = null;
+
+        // Handle service image - check for predefined image ID first
+        if (serviceData.service_image_id) {
+          console.log("Using predefined service image ID:", serviceData.service_image_id);
+          // User selected a predefined service image
+          const serviceImage = await ServiceImage.findByPk(serviceData.service_image_id);
+          console.log("Service image found:", serviceImage ? 'YES' : 'NO');
+          if (!serviceImage || !serviceImage.is_active) {
+            return response.badRequest("Invalid service image selected", res, false);
+          }
+          serviceImageUrl = serviceImage.image_url;
+          console.log("Using predefined service image URL:", serviceImageUrl);
+        } else if (uploadedFiles && uploadedFiles.service_images && uploadedFiles.service_images[index]) {
+          // Handle file upload from multer using S3 like in step 3
+          console.log("Processing custom service image upload (file)...");
+          const file = uploadedFiles.service_images[index];
+          console.log("File details:", {
+            originalname: file.originalname,
+            size: file.size,
+            mimetype: file.mimetype,
+            buffer: file.buffer ? 'Buffer exists' : 'No buffer'
+          });
+          
+          // Validate S3 configuration
+          console.log("Validating S3 config...");
+          if (!s3Helper.validateConfig()) {
+            console.log("S3 config validation failed");
+            return response.badRequest("S3 configuration is invalid. Please check AWS credentials and bucket settings.", res, false);
+          }
+
+          console.log("S3 config validation passed");
+
+          // Upload to S3 using the same method as step 3
+          console.log("Starting S3 upload...");
+          const uploadResult = await s3Helper.uploadImage(
+            file.buffer,
+            file.originalname,
+            'providers',
+            `service-images/${serviceProvider.id}`,
+            {
+              maxSize: 5 * 1024 * 1024, // 5MB limit for service images
+              generateThumbnail: true,
+              thumbnailSize: { width: 300, height: 200 },
+              uploadedBy: `provider_${provider.id}`,
+              originalName: file.originalname
+            }
+          );
+          console.log("S3 upload result:", uploadResult);
+
+          if (!uploadResult.success) {
+            console.log("S3 upload failed:", uploadResult.error);
+            return response.badRequest(`Failed to upload service image: ${uploadResult.error}`, res, false);
+          }
+
+          serviceImageUrl = uploadResult.main.url;
+          console.log("S3 upload successful, URL:", serviceImageUrl);
+        }
+
         return ServiceList.create({
-          service_provider_id: provider.id,
-          service_id: serviceData.service_id,
+          service_provider_id: serviceProvider.id,
+          service_id: serviceData.service_id, // Add service_id for proper hierarchy
           category_id: serviceData.category_id,
           sub_category_id: serviceData.sub_category_id || null,
-          title: serviceData.title || null,
+          title: serviceData.title || null, // Optional - can use category title
           price: serviceData.price,
-          description: serviceData.description || null,
-          service_location: serviceData.service_location || 1,
-          is_sub_service: serviceData.is_sub_service || 0,
-          have_offers: serviceData.have_offers || 0,
+          description: serviceData.description || null, // Optional
+          service_image: serviceImageUrl,
+          service_location: serviceData.service_location || 1, // Default to 1 if not provided
+          is_sub_service: serviceData.is_sub_service || 0, // Optional - default to 0
+          have_offers: serviceData.have_offers || 0, // Optional - default to 0
           status: 1,
         });
       });
 
-      await Promise.all(servicePromises);
+      const createdServices = await Promise.all(servicePromises);
 
-      await provider.update({
-        step_completed: 3,
+      await serviceProvider.update({
+        step_completed: 6,
+      });
+
+      // Get the created services with category, subcategory, and location details
+      const servicesWithDetails = await ServiceList.findAll({
+        where: { service_provider_id: serviceProvider.id },
+        include: [
+          {
+            model: db.models.Category,
+            as: 'category',
+            attributes: ['id', 'title', 'image']
+          },
+          {
+            model: db.models.subcategory,
+            as: 'subcategory',
+            attributes: ['id', 'title', 'image']
+          },
+          {
+            model: db.models.ServiceLocation,
+            as: 'location',
+            attributes: ['id', 'title', 'description']
+          }
+        ],
+        order: [['created_at', 'DESC']]
       });
 
       return response.success("Services setup successfully", res, {
-        provider: await ServiceProvider.findByPk(provider.id),
-        next_step: "availability_setup",
+        provider: await ServiceProvider.findByPk(serviceProvider.id),
+        services: servicesWithDetails,
+        next_step: "profile_complete",
       });
     } catch (error) {
       console.error("Error setting up services:", error);
@@ -869,7 +1115,122 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Set provider's availability schedule
+   * Step 5: Set working days and hours for provider
+   * This is the final step in the provider onboarding process
+   */
+  async step5WorkingHours(req, res) {
+    console.log("ProviderController@step5WorkingHours - START");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    
+    const provider = req.provider;
+    const availabilityData = req.body.availability;
+
+    try {
+      // Validate required fields
+      if (!availabilityData || !Array.isArray(availabilityData) || availabilityData.length === 0) {
+        return response.badRequest("Availability data is required and must be an array", res, false);
+      }
+
+      // Validate each availability record
+      const errors = [];
+      const daysOfWeek = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+      
+      availabilityData.forEach((item, index) => {
+        if (!item.day) {
+          errors.push(`Day is required for availability record ${index + 1}`);
+        } else if (!daysOfWeek.includes(item.day.toLowerCase())) {
+          errors.push(`Invalid day '${item.day}' for availability record ${index + 1}`);
+        }
+        
+        if (!item.from_time) {
+          errors.push(`From time is required for ${item.day}`);
+        }
+        
+        if (!item.to_time) {
+          errors.push(`To time is required for ${item.day}`);
+        }
+        
+        // Validate time format (HH:MM)
+        const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+        if (item.from_time && !timeRegex.test(item.from_time)) {
+          errors.push(`Invalid from_time format for ${item.day}. Use HH:MM format`);
+        }
+        if (item.to_time && !timeRegex.test(item.to_time)) {
+          errors.push(`Invalid to_time format for ${item.day}. Use HH:MM format`);
+        }
+        
+        // Validate time range
+        if (item.from_time && item.to_time) {
+          const fromTime = new Date(`2000-01-01T${item.from_time}:00`);
+          const toTime = new Date(`2000-01-01T${item.to_time}:00`);
+          if (fromTime >= toTime) {
+            errors.push(`From time must be before to time for ${item.day}`);
+          }
+        }
+      });
+
+      if (errors.length > 0) {
+        return response.badRequest(errors.join(", "), res, false);
+      }
+
+      // Delete existing availability records for this provider
+      await ServiceProviderAvailability.destroy({
+        where: { service_provider_id: provider.id }
+      });
+
+      // Create new availability records
+      const availabilityRecords = availabilityData.map(item => ({
+        service_provider_id: provider.id,
+        day: item.day.toLowerCase(),
+        from_time: item.from_time,
+        to_time: item.to_time,
+        available: item.available !== undefined ? item.available : 1
+      }));
+
+      await ServiceProviderAvailability.bulkCreate(availabilityRecords);
+
+      // Update provider step completion
+      await provider.update({
+        step_completed: 5,
+      });
+
+      // Get updated provider with availability details
+      const updatedProvider = await ServiceProvider.findByPk(provider.id, {
+        include: [
+          {
+            model: ServiceProviderAvailability,
+            as: 'availability'
+          }
+        ]
+      });
+
+      const responseData = {
+        id: updatedProvider.id,
+        step_completed: updatedProvider.step_completed,
+        availability: updatedProvider.availability.map(avail => ({
+          id: avail.id,
+          day: avail.day,
+          from_time: avail.from_time,
+          to_time: avail.to_time,
+          available: avail.available
+        })),
+        next_step: "setup_services",
+        message: "Working hours set successfully. Next step: Setup services"
+      };
+
+      console.log("Step 5 completed successfully, returning result");
+      return response.success("Step 5 completed successfully", res, responseData);
+
+    } catch (error) {
+      console.error("Error in Step 5:", error);
+      console.error("Error stack:", error.stack);
+      console.error("Error message:", error.message);
+      return response.exception("Failed to complete Step 5", res);
+    }
+  }
+
+  /**
+   * Set provider's availability schedule (legacy method)
    */
   async setAvailability(req, res) {
     console.log("ProviderController@setAvailability");
@@ -1481,7 +1842,7 @@ module.exports = class ProviderController {
         include: [
           {
             model: db.models.City,
-            as: "cities",
+            as: "city",
             where: { status: 1 },
             required: false,
           },
@@ -1499,7 +1860,7 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Step 1: Subscription Payment
+   * Subscription Payment
    * Mock payment that always returns true and creates/updates ServiceProvider with subscription details
    */
   async step1SubscriptionPayment(req, res) {
@@ -1528,7 +1889,7 @@ module.exports = class ProviderController {
         await serviceProvider.update({
           subscription_id: subscriptionId,
           subscription_expiry: subscriptionExpiry,
-          step_completed: 1 // Mark step 1 as completed
+          step_completed: Math.max(serviceProvider.step_completed, 1) // Keep highest step completed
         });
       } else {
         // Create new ServiceProvider
@@ -1537,7 +1898,7 @@ module.exports = class ProviderController {
           provider_type: 'individual', // Default value
           subscription_id: subscriptionId,
           subscription_expiry: subscriptionExpiry,
-          step_completed: 1 // Mark step 1 as completed
+          step_completed: 1
         });
       }
 
@@ -1546,13 +1907,13 @@ module.exports = class ProviderController {
         service_provider_id: serviceProvider.id,
         subscription_id: subscriptionId,
         subscription_expiry: subscriptionExpiry,
-        step_completed: 1,
+        step_completed: serviceProvider.step_completed,
         payment_status: "success",
         message: "Subscription payment successful"
       };
 
       return response.success(
-        "Step 1 completed: Subscription payment successful",
+        "Subscription payment successful",
         res,
         result
       );
@@ -1564,7 +1925,7 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Step 2: Set Provider Type (Individual or Salon)
+   * Set Provider Type (Individual or Salon)
    */
   async step2ProviderType(req, res) {
     console.log("ProviderController@step2ProviderType");
@@ -1574,49 +1935,36 @@ module.exports = class ProviderController {
       // Get user_id from authenticated user (from token)
       const userId = req.user.id;
 
-      // Find ServiceProvider record
+      // Find or create ServiceProvider record
       let serviceProvider = await ServiceProvider.findOne({
         where: { user_id: userId }
       });
 
       if (!serviceProvider) {
-        return response.badRequest("ServiceProvider record not found. Please complete Step 1 first.", res, false);
+        // Create new ServiceProvider if doesn't exist
+        serviceProvider = await ServiceProvider.create({
+          user_id: userId,
+          provider_type: data.provider_type,
+          step_completed: 2
+        });
+      } else {
+        // Update existing ServiceProvider
+        await serviceProvider.update({
+          provider_type: data.provider_type,
+          step_completed: Math.max(serviceProvider.step_completed, 2) // Keep highest step completed
+        });
       }
-
-      // Check if step 1 is completed
-      if (serviceProvider.step_completed < 1) {
-        return response.badRequest("Please complete Step 1 (Subscription Payment) first", res, false);
-      }
-
-      // Check if step 2 is already completed
-      if (serviceProvider.step_completed >= 2) {
-        return response.badRequest("Step 2 (Provider Type) is already completed", res, false);
-      }
-
-      // Update ServiceProvider with provider type and salon name (if applicable)
-      const updateData = {
-        provider_type: data.provider_type,
-        step_completed: 2 // Mark step 2 as completed
-      };
-
-      // Add salon name if provider type is salon
-      if (data.provider_type === 'salon' && data.salon_name) {
-        updateData.salon_name = data.salon_name;
-      }
-
-      await serviceProvider.update(updateData);
 
       const result = {
         user_id: userId,
         service_provider_id: serviceProvider.id,
         provider_type: data.provider_type,
-        salon_name: data.provider_type === 'salon' ? data.salon_name : null,
-        step_completed: 2,
+        step_completed: serviceProvider.step_completed,
         message: "Provider type set successfully"
       };
 
       return response.success(
-        "Step 2 completed: Provider type set successfully",
+        "Provider type set successfully",
         res,
         result
       );
@@ -1626,4 +1974,242 @@ module.exports = class ProviderController {
       return response.exception("Failed to set provider type", res);
     }
   }
+
+  /**
+   * Get available predefined banner images
+   */
+  async getBannerImages(req, res) {
+    console.log("ProviderController@getBannerImages");
+
+    try {
+      const bannerImages = await BannerImage.findAll({
+        where: { is_active: 1 },
+        attributes: ['id', 'title', 'image_url', 'thumbnail_url', 'category'],
+        order: [['sort_order', 'ASC'], ['title', 'ASC']]
+      });
+
+      return response.success(
+        "Banner images retrieved successfully",
+        res,
+        { banner_images: bannerImages }
+      );
+    } catch (error) {
+      console.error("Error getting banner images:", error);
+      return response.exception(error.message, res);
+    }
+  }
+
+  /**
+   * Get available predefined service images
+   */
+  async getServiceImages(req, res) {
+    console.log("ProviderController@getServiceImages");
+
+    try {
+      const serviceImages = await ServiceImage.findAll({
+        where: { is_active: 1 },
+        attributes: ['id', 'title', 'image_url', 'thumbnail_url', 'category'],
+        order: [['sort_order', 'ASC'], ['title', 'ASC']]
+      });
+
+      return response.success(
+        "Service images retrieved successfully",
+        res,
+        { service_images: serviceImages }
+      );
+    } catch (error) {
+      console.error("Error getting service images:", error);
+      return response.exception(error.message, res);
+    }
+  }
+
+  /**
+   * Get available service locations
+   */
+  async getServiceLocations(req, res) {
+    console.log("ProviderController@getServiceLocations");
+
+    try {
+      const serviceLocations = await db.models.ServiceLocation.findAll({
+        where: { status: 1 },
+        attributes: ['id', 'title', 'description'],
+        order: [['title', 'ASC']]
+      });
+
+      return response.success(
+        "Service locations retrieved successfully",
+        res,
+        { service_locations: serviceLocations }
+      );
+    } catch (error) {
+      console.error("Error getting service locations:", error);
+      return response.exception(error.message, res);
+    }
+  }
+
+  /**
+   * Set Salon Details (salon name, city, country, description, banner image)
+   */
+  async step3SalonDetails(req, res) {
+    console.log("ProviderController@step3SalonDetails - START");
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
+    console.log("Request files:", req.files ? Object.keys(req.files) : 'No files');
+    if (req.files && req.files.banner_image) {
+      console.log("Banner image file details:", {
+        originalname: req.files.banner_image[0]?.originalname,
+        size: req.files.banner_image[0]?.size,
+        mimetype: req.files.banner_image[0]?.mimetype
+      });
+    }
+    
+    const data = req.body;
+    const files = req.files; // For custom banner image upload
+
+    try {
+      // Get user_id from authenticated user (from token)
+      const userId = req.user.id;
+      console.log("User ID from token:", userId);
+
+      // Find or create ServiceProvider record
+      let serviceProvider = await ServiceProvider.findOne({
+        where: { user_id: userId }
+      });
+
+      if (!serviceProvider) {
+        // Create new ServiceProvider if doesn't exist
+        serviceProvider = await ServiceProvider.create({
+          user_id: userId,
+          provider_type: 'individual', // Default value
+          step_completed: 3
+        });
+      }
+
+      // Validate required fields based on provider type
+      if (!data.city_id || !data.country_id) {
+        return response.badRequest("City and country are required", res, false);
+      }
+
+      // Conditional salon name validation
+      if (serviceProvider.provider_type === 'salon' && !data.salon_name) {
+        return response.badRequest("Salon name is required for salon providers", res, false);
+      }
+
+      // Prepare update data
+      const updateData = {
+        city_id: data.city_id,
+        country_id: data.country_id,
+        description: data.description || null, // Description is optional
+        step_completed: Math.max(serviceProvider.step_completed, 3) // Keep highest step completed
+      };
+
+      // Add salon_name only if provided or if provider type is salon
+      if (data.salon_name) {
+        updateData.salon_name = data.salon_name;
+      } else if (serviceProvider.provider_type === 'salon') {
+        // For salon providers, keep existing salon_name if not provided
+        updateData.salon_name = serviceProvider.salon_name;
+      }
+
+      // Handle banner image
+      console.log("Starting banner image handling...");
+      let bannerImageUrl = null;
+
+      if (data.banner_image_id) {
+        console.log("Using predefined banner image ID:", data.banner_image_id);
+        // User selected a predefined banner image
+        const bannerImage = await BannerImage.findByPk(data.banner_image_id);
+        console.log("Banner image found:", bannerImage ? 'YES' : 'NO');
+        if (!bannerImage || !bannerImage.is_active) {
+          return response.badRequest("Invalid banner image selected", res, false);
+        }
+        bannerImageUrl = bannerImage.image_url;
+        console.log("Using predefined banner URL:", bannerImageUrl);
+      } else if (files && files.banner_image && files.banner_image[0]) {
+        console.log("Processing custom banner image upload...");
+        // User uploaded a custom banner image
+        const file = files.banner_image[0];
+        console.log("File details:", {
+          originalname: file.originalname,
+          size: file.size,
+          mimetype: file.mimetype,
+          buffer: file.buffer ? 'Buffer exists' : 'No buffer'
+        });
+        
+        // Validate S3 configuration
+        console.log("Validating S3 config...");
+        if (!s3Helper.validateConfig()) {
+          console.log("S3 config validation failed");
+          return response.badRequest("S3 configuration is invalid. Please check AWS credentials and bucket settings.", res, false);
+        }
+
+        console.log("S3 config validation passed");
+
+        // Upload to S3
+        console.log("Starting S3 upload...");
+        const uploadResult = await s3Helper.uploadImage(
+          file.buffer,
+          file.originalname,
+          'providers',
+          `banners/${serviceProvider.id}`,
+          {
+            maxSize: 5 * 1024 * 1024, // 5MB limit for banner images
+            generateThumbnail: true,
+            thumbnailSize: { width: 300, height: 200 },
+            uploadedBy: `provider_${serviceProvider.id}`,
+            originalName: file.originalname
+          }
+        );
+        console.log("S3 upload result:", uploadResult);
+
+        if (!uploadResult.success) {
+          console.log("S3 upload failed:", uploadResult.error);
+          return response.badRequest(`Failed to upload banner image: ${uploadResult.error}`, res, false);
+        }
+
+        bannerImageUrl = uploadResult.main.url;
+        console.log("S3 upload successful, URL:", bannerImageUrl);
+      } else {
+        console.log("No banner image provided - this should not happen");
+        // This should not happen due to validation, but adding as a safety check
+        return response.badRequest("Banner image (either predefined ID or custom upload) is required", res, false);
+      }
+
+      // Update banner image URL
+      updateData.banner_image = bannerImageUrl;
+      console.log("Update data prepared:", updateData);
+
+      // Update ServiceProvider
+      console.log("Updating ServiceProvider...");
+      await serviceProvider.update(updateData);
+      console.log("ServiceProvider updated successfully");
+
+      const result = {
+        user_id: userId,
+        service_provider_id: serviceProvider.id,
+        salon_name: updateData.salon_name || null,
+        city_id: data.city_id,
+        country_id: data.country_id,
+        description: data.description || null,
+        banner_image: bannerImageUrl,
+        step_completed: serviceProvider.step_completed,
+        message: "Salon details updated successfully"
+      };
+
+      console.log("Salon details updated successfully, returning result");
+      return response.success(
+        "Salon details updated successfully",
+        res,
+        result
+      );
+
+    } catch (error) {
+      console.error("Error in step3SalonDetails:", error);
+      console.error("Error stack:", error.stack);
+      console.error("Error message:", error.message);
+      return response.exception("Failed to update salon details", res);
+    }
+  }
+
+
 }
+

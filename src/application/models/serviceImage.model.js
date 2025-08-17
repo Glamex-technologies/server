@@ -1,6 +1,7 @@
 'use strict';
+
 module.exports = (sequelize, DataTypes) => {
-  const Service = sequelize.define('Service', {
+  const ServiceImage = sequelize.define('ServiceImage', {
     id: {
       type: DataTypes.INTEGER,
       autoIncrement: true,
@@ -11,14 +12,27 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: false
     },
-    image: {
+    image_url: {
+      type: DataTypes.STRING,
+      allowNull: false
+    },
+    thumbnail_url: {
       type: DataTypes.STRING,
       allowNull: true
     },
-    status: {
+    category: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    is_active: {
       type: DataTypes.TINYINT,
       allowNull: false,
       defaultValue: 1
+    },
+    sort_order: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0
     },
     created_at: {
       type: DataTypes.DATE,
@@ -29,31 +43,12 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATE,
       allowNull: false,
       defaultValue: sequelize.literal('CURRENT_TIMESTAMP')
-    },
-    deleted_at: {
-      type: DataTypes.DATE,
-      allowNull: true
     }
   }, {
-    tableName: 'services',
+    tableName: 'service_images',
     timestamps: false,
-    underscored: true,
-    paranoid: true,
+    underscored: true
   });
 
-  Service.associate = function(models) {
-    // Master Service has many Categories
-    Service.hasMany(models.Category, {
-      foreignKey: 'service_id',
-      as: 'categories'
-    });
-
-    // Master Service has many ServiceLists (for direct service offerings)
-    Service.hasMany(models.ServiceList, {
-      foreignKey: 'service_id',
-      as: 'serviceLists'
-    });
-  };
-
-  return Service;
+  return ServiceImage;
 };
