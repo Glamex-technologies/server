@@ -16,6 +16,13 @@ module.exports = {
         status: 1,
         created_at: new Date(),
         updated_at: new Date()
+      },
+      {
+        title: 'At Customer Location',
+        description: 'Service provided at customer\'s location',
+        status: 1,
+        created_at: new Date(),
+        updated_at: new Date()
       }
     ], {});
   },
