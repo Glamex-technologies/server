@@ -5,6 +5,7 @@ const ResponseHelper = require("../../helpers/response.helpers");
 const { genrateToken } = require("../../helpers/jwtToken.helpers");
 const db = require("../../../startup/model");
 const OtpVerification = db.models.OtpVerification;
+const UserAddress = db.models.UserAddress;
 const userResources = new UserResources();
 const response = new ResponseHelper();
 
@@ -33,8 +34,6 @@ module.exports = class UserController {
       phone_number: data.phone_number,
       password: hashedPassword,
       terms_and_condition: 1,
-      country_id: data.country_id,
-      city_id: data.city_id,
       gender: data.gender,
     };
     console.log("Creating user with data:", {
@@ -43,6 +42,23 @@ module.exports = class UserController {
     });
     const user = await userResources.create(userObj);
     console.log("User created:", { id: user.id });
+
+    // Create address record for the user
+    try {
+      const addressObj = {
+        user_id: user.id,
+        country_id: data.country_id,
+        city_id: data.city_id,
+        address: null, // Will be filled later
+        latitude: null, // Will be filled later
+        longitude: null, // Will be filled later
+      };
+      await UserAddress.create(addressObj);
+      console.log("User address created for user:", { id: user.id });
+    } catch (error) {
+      console.error("Error creating user address:", error);
+      // Continue without failing registration
+    }
 
     // Create OTP using the new system
     try {
@@ -60,6 +76,11 @@ module.exports = class UserController {
       console.error("Error creating OTP:", error);
       // Continue without failing registration
     }
+    // Get user address information for response
+    const userAddress = await UserAddress.findOne({
+      where: { user_id: user.id }
+    });
+
     // Prepare response object
     const result = {
       id: user.id,
@@ -71,6 +92,9 @@ module.exports = class UserController {
       phone_code: user.phone_code,
       phone_number: user.phone_number,
       gender: user.gender,
+      country_id: userAddress?.country_id || null,
+      city_id: userAddress?.city_id || null,
+      is_verified: user.is_verified,
     };
 
     return response.success("User registered successfully", res, result);
@@ -116,6 +140,11 @@ module.exports = class UserController {
         { id: data.user_id }
       );
       // Prepare user object for token
+      // Get user address information
+      const userAddress = await UserAddress.findOne({
+        where: { user_id: user.id }
+      });
+
       const userObj = {
         id: user.id,
         first_name: user.first_name,
@@ -125,8 +154,8 @@ module.exports = class UserController {
         email: user.email,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
-        country_id: user.country_id,
-        city_id: user.city_id,
+        country_id: userAddress?.country_id || null,
+        city_id: userAddress?.city_id || null,
         is_verified: user.is_verified,
       };
       // Generate JWT token
@@ -204,6 +233,11 @@ module.exports = class UserController {
       } catch (error) {
         console.error("Error creating login OTP:", error);
       }
+      // Get user address information
+      const userAddress = await UserAddress.findOne({
+        where: { user_id: user.id }
+      });
+
       const result = {
         id: user.id,
         first_name: user.first_name,
@@ -213,7 +247,8 @@ module.exports = class UserController {
         email: user.email,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
-        city_id: user.city_id,
+        country_id: userAddress?.country_id || null,
+        city_id: userAddress?.city_id || null,
         is_verified: user.is_verified,
       };
       return response.success(
@@ -223,6 +258,11 @@ module.exports = class UserController {
       );
     }
     // If verified, generate token
+    // Get user address information
+    const userAddress = await UserAddress.findOne({
+      where: { user_id: user.id }
+    });
+
     const userObj = {
       id: user.id,
       first_name: user.first_name,
@@ -232,8 +272,8 @@ module.exports = class UserController {
       email: user.email,
       phone_code: user.phone_code,
       phone_number: user.phone_number,
-      country_id: user.country_id,
-      city_id: user.city_id,
+      country_id: userAddress?.country_id || null,
+      city_id: userAddress?.city_id || null,
       is_verified: user.is_verified,
     };
     const accessToken = await genrateToken({ ...userObj, userType: "user" });
@@ -248,7 +288,8 @@ module.exports = class UserController {
         email: user.email,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
-        city_id: user.city_id,
+        country_id: userAddress?.country_id || null,
+        city_id: userAddress?.city_id || null,
         is_verified: user.is_verified,
       },
     };
@@ -412,6 +453,12 @@ module.exports = class UserController {
     if (!user) {
       return response.badRequest("User not found", res, false);
     }
+    
+    // Get user address information
+    const userAddress = await UserAddress.findOne({
+      where: { user_id: user.id }
+    });
+    
     const result = {
       id: user.id,
       first_name: user.first_name,
@@ -423,8 +470,11 @@ module.exports = class UserController {
       profile_image: user.profile_image,
       status: user.status,
       gender: user.gender,
-      country: user.country,
-      city: user.city,
+      country_id: userAddress?.country_id || null,
+      city_id: userAddress?.city_id || null,
+      address: userAddress?.address || null,
+      latitude: userAddress?.latitude || null,
+      longitude: userAddress?.longitude || null,
       created_at: user.created_at,
     };
     return response.success("User fetched successfully", res, result);
@@ -441,29 +491,56 @@ module.exports = class UserController {
         return response.badRequest("User not found", res, false);
       }
       // Remove user_id to prevent updating it
-      const { user_id, ...updateData } = data;
-      // Only include valid keys for update
-      const allowedFields = [
+      const { user_id, country_id, city_id, ...updateData } = data;
+      
+      // Only include valid keys for user update
+      const allowedUserFields = [
         "first_name",
         "last_name",
         "email",
-        "country_id",
-        "city_id",
         "profile_image",
         "status",
         "gender",
       ];
-      const finalUpdateData = {};
-      for (const key of allowedFields) {
+      const finalUserUpdateData = {};
+      for (const key of allowedUserFields) {
         if (key in updateData) {
           // includes keys with null values too
-          finalUpdateData[key] = updateData[key];
+          finalUserUpdateData[key] = updateData[key];
         }
       }
+      
       // Update the user
-      const result = await userResources.updateUser(finalUpdateData, {
+      await userResources.updateUser(finalUserUpdateData, {
         id: data.user_id,
       });
+      
+      // Update address information if provided
+      if (country_id !== undefined || city_id !== undefined) {
+        const userAddress = await UserAddress.findOne({
+          where: { user_id: data.user_id }
+        });
+        
+        if (userAddress) {
+          // Update existing address record
+          const addressUpdateData = {};
+          if (country_id !== undefined) addressUpdateData.country_id = country_id;
+          if (city_id !== undefined) addressUpdateData.city_id = city_id;
+          
+          await userAddress.update(addressUpdateData);
+        } else {
+          // Create new address record
+          await UserAddress.create({
+            user_id: data.user_id,
+            country_id: country_id || null,
+            city_id: city_id || null,
+            address: null,
+            latitude: null,
+            longitude: null,
+          });
+        }
+      }
+      
       return response.success("User updated successfully", res);
     } catch (error) {
       console.error("Error in updateUser:", error);

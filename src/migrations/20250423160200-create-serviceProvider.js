@@ -34,39 +34,7 @@ module.exports = {
         type: Sequelize.TEXT,
         allowNull: true,
       },
-      location: {
-        type: Sequelize.STRING,
-        allowNull: true,
-        comment: "Full address provided by provider"
-      },
-      latitude: {
-        type: Sequelize.DECIMAL(10, 8),
-        allowNull: true,
-      },
-      longitude: {
-        type: Sequelize.DECIMAL(11, 8),
-        allowNull: true,
-      },
-      country_id: {
-        type: Sequelize.INTEGER,
-        allowNull: true,
-        references: {
-          model: "countries",
-          key: "id",
-        },
-        onUpdate: "CASCADE",
-        onDelete: "SET NULL",
-      },
-      city_id: {
-        type: Sequelize.INTEGER,
-        allowNull: true,
-        references: {
-          model: "cities",
-          key: "id",
-        },
-        onUpdate: "CASCADE",
-        onDelete: "SET NULL",
-      },
+
       national_id_image_url: {
         type: Sequelize.STRING,
         allowNull: true,

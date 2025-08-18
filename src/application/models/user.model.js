@@ -45,14 +45,6 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
         allowNull: true,
       },
-      country_id: {
-        type: DataTypes.INTEGER,
-        allowNull: false,
-      },
-      city_id: {
-        type: DataTypes.INTEGER,
-        allowNull: false,
-      },
       password: {
         type: DataTypes.STRING,
         allowNull: false,
@@ -74,19 +66,6 @@ module.exports = (sequelize, DataTypes) => {
       },
       // details needed in registration//
       profile_image: {
-        type: DataTypes.STRING,
-        allowNull: true,
-      },
-
-      latitude: {
-        type: DataTypes.DECIMAL(10, 7),
-        allowNull: true,
-      },
-      longitude: {
-        type: DataTypes.DECIMAL(10, 7),
-        allowNull: true,
-      },
-      location: {
         type: DataTypes.STRING,
         allowNull: true,
       },
@@ -125,6 +104,11 @@ module.exports = (sequelize, DataTypes) => {
       timestamps: true,
       paranoid: true, // For soft deletes using `deleted_at`
       underscored: true, // Maps camelCase fields to snake_case columns
+      defaultScope: {
+        attributes: { 
+          exclude: ['country_id', 'city_id', 'latitude', 'longitude', 'location'] 
+        }
+      },
       indexes: [
         {
           unique: true,
@@ -136,19 +120,19 @@ module.exports = (sequelize, DataTypes) => {
   );
 
   User.associate = function (models) {
-    User.belongsTo(models.Country, {
-      foreignKey: "country_id",
-      as: "country",
-    });
-
-    User.belongsTo(models.City, {
-      foreignKey: "city_id",
-      as: "city",
-    });
-
     User.hasOne(models.ServiceProvider, {
       foreignKey: "user_id",
       as: "serviceProvider",
+    });
+
+    User.hasMany(models.UserAddress, {
+      foreignKey: "user_id",
+      as: "addresses",
+    });
+
+    User.hasMany(models.ServiceProviderAddress, {
+      foreignKey: "user_id",
+      as: "providerAddresses",
     });
   };
 

@@ -33,34 +33,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
-    location: {
-      type: DataTypes.STRING,
-      allowNull: true
-    },
-    latitude: {
-      type: DataTypes.DECIMAL(10, 8),
-      allowNull: true
-    },
-    longitude: {
-      type: DataTypes.DECIMAL(11, 8),
-      allowNull: true
-    },
-    country_id: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-      references: {
-        model: 'countries',
-        key: 'id'
-      }
-    },
-    city_id: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-      references: {
-        model: 'cities',
-        key: 'id'
-      }
-    },
     national_id_image_url: {
       type: DataTypes.STRING,
       allowNull: true
@@ -137,7 +109,12 @@ module.exports = (sequelize, DataTypes) => {
     createdAt: 'created_at',
     updatedAt: 'updated_at',
     paranoid: true,
-    deletedAt: 'deleted_at'
+    deletedAt: 'deleted_at',
+    defaultScope: {
+      attributes: { 
+        exclude: ['country_id', 'city_id', 'latitude', 'longitude', 'location'] 
+      }
+    }
   });
 
   ServiceProvider.associate = function(models) {
@@ -147,17 +124,7 @@ module.exports = (sequelize, DataTypes) => {
       as: 'user'
     });
 
-    // Association with Country
-    ServiceProvider.belongsTo(models.Country, {
-      foreignKey: 'country_id',
-      as: 'country'
-    });
 
-    // Association with City
-    ServiceProvider.belongsTo(models.City, {
-      foreignKey: 'city_id',
-      as: 'city'
-    });
 
     // Note: subscription_id is now a simple integer field for tracking subscription status
 
