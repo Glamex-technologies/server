@@ -108,8 +108,9 @@ const userAuth = async (req, res, next) => {
     if (!decoded || decoded.userType != "user") {
       return response.forbidden("Authentication failed", res, null);
     }
-    // Find user
-    const user = await userResources.findOne({ id: decoded.user_id });
+    // Find user - handle both user_id and id from token
+    const userId = decoded.user_id || decoded.id;
+    const user = await userResources.findOne({ id: userId });
     if (!user) {
       return response.forbidden("Authentication failed", res, null);
     }

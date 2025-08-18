@@ -21,6 +21,7 @@ const CategoryRoutes = require("../application/resources/category/category.route
 const SubCategoryRoutes = require("../application/resources/subCategory/subCategory.routes");
 const ServiceListRoutes = require("../application/resources/serviceList/serviceList.routes");
 const GalleryRoutes = require("../application/resources/gallery/gallery.routes");
+const BookingRoutes = require("../application/resources/bookings/booking.routes");
 
 // Import all routes here and add them to the routes object
 routes.use("/user", UserRoutes);
@@ -32,5 +33,6 @@ routes.use("/category", CategoryRoutes);
 routes.use("/sub-category", SubCategoryRoutes);
 routes.use("/service-list", ServiceListRoutes);
 routes.use("/gallery", GalleryRoutes);
+routes.use("/api", BookingRoutes);
 
 module.exports = routes;
