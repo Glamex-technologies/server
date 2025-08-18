@@ -20,6 +20,8 @@ const BankDetails = require("../application/models/bankDetails.model");
 const BannerImage = require("../application/models/bannerImage.model");
 const ServiceImage = require("../application/models/serviceImage.model");
 const ServiceLocation = require("../application/models/serviceLocation.model");
+const UserAddress = require("../application/models/userAddress.model");
+const ServiceProviderAddress = require("../application/models/serviceProviderAddress.model");
 
 const models = {
   Token: Token(sequelize, Sequelize.DataTypes),
@@ -40,6 +42,8 @@ const models = {
   BannerImage: BannerImage(sequelize, Sequelize.DataTypes),
   ServiceImage: ServiceImage(sequelize, Sequelize.DataTypes),
   ServiceLocation: ServiceLocation(sequelize, Sequelize.DataTypes),
+  UserAddress: UserAddress(sequelize, Sequelize.DataTypes),
+  ServiceProviderAddress: ServiceProviderAddress(sequelize, Sequelize.DataTypes),
 };
 
 Object.values(models)

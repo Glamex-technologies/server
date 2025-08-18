@@ -109,7 +109,7 @@ const userAuth = async (req, res, next) => {
       return response.forbidden("Authentication failed", res, null);
     }
     // Find user
-    const user = await userResources.getAllDetails({ id: decoded.user_id });
+    const user = await userResources.findOne({ id: decoded.user_id });
     if (!user) {
       return response.forbidden("Authentication failed", res, null);
     }

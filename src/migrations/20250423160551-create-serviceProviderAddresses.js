@@ -2,17 +2,17 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.createTable('user_addresses', {  // Table name in snake_case
+    await queryInterface.createTable('service_provider_addresses', {
       id: {
         type: Sequelize.INTEGER,
         autoIncrement: true,
         primaryKey: true
       },
-      user_id: {  // snake_case applied
+      user_id: {
         type: Sequelize.INTEGER,
         allowNull: false,
         references: {
-          model: 'users', // assumes users table already exists
+          model: 'users',
           key: 'id'
         },
         onUpdate: 'CASCADE',
@@ -20,17 +20,18 @@ module.exports = {
       },
       address: {
         type: Sequelize.STRING,
-        allowNull: true
+        allowNull: true,
+        comment: "Full address provided by provider"
       },
       latitude: {
-        type: Sequelize.STRING,
+        type: Sequelize.DECIMAL(10, 8),
         allowNull: true
       },
       longitude: {
-        type: Sequelize.STRING,
+        type: Sequelize.DECIMAL(11, 8),
         allowNull: true
       },
-      country_id: {  // snake_case applied
+      country_id: {
         type: Sequelize.INTEGER,
         allowNull: true,
         references: {
@@ -40,7 +41,7 @@ module.exports = {
         onUpdate: 'SET NULL',
         onDelete: 'SET NULL'
       },
-      city_id: {  // snake_case applied
+      city_id: {
         type: Sequelize.INTEGER,
         allowNull: true,
         references: {
@@ -50,12 +51,12 @@ module.exports = {
         onUpdate: 'SET NULL',
         onDelete: 'SET NULL'
       },
-      created_at: {  // snake_case applied
+      created_at: {
         type: Sequelize.DATE,
         allowNull: false,
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP')
       },
-      updated_at: {  // snake_case applied
+      updated_at: {
         type: Sequelize.DATE,
         allowNull: false,
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP')
@@ -64,6 +65,6 @@ module.exports = {
   },
 
   down: async (queryInterface, Sequelize) => {
-    await queryInterface.dropTable('user_addresses');
+    await queryInterface.dropTable('service_provider_addresses');
   }
 };

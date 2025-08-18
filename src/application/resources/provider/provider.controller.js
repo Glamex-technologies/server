@@ -27,6 +27,7 @@ const userResources = new UserResources();
 // Models
 const User = db.models.User;
 const ServiceProvider = db.models.ServiceProvider;
+const ServiceProviderAddress = db.models.ServiceProviderAddress;
 const BankDetails = db.models.BankDetails;
 const ServiceProviderAvailability = db.models.ServiceProviderAvailability;
 const Service = db.models.Service;
@@ -66,13 +67,28 @@ module.exports = class ProviderController {
         password: hashedPassword,
         terms_and_condition: data.terms_and_condition || 1,
         gender: data.gender,
-        country_id: data.country_id || 1, // Default to first country if not provider
-        city_id: data.city_id || 1, // Default to first city if not provided
         is_verified: 0,
         status: 1, // User account is active by default
       };
 
       const user = await User.create(userData);
+
+      // Create address record for the provider user
+      try {
+        const addressObj = {
+          user_id: user.id,
+          country_id: data.country_id || 1, // Default to first country if not provided
+          city_id: data.city_id || 1, // Default to first city if not provided
+          address: null, // Will be filled later
+          latitude: null, // Will be filled later
+          longitude: null, // Will be filled later
+        };
+        await ServiceProviderAddress.create(addressObj);
+        console.log("Provider address created for user:", { id: user.id });
+      } catch (error) {
+        console.error("Error creating provider address:", error);
+        // Continue without failing registration
+      }
 
       // Step 2: Create OTP using the user's phone number (not provider ID)
       try {
@@ -90,6 +106,11 @@ module.exports = class ProviderController {
         console.error("Error creating provider user OTP:", error);
       }
 
+      // Get provider address information for response
+      const providerAddress = await ServiceProviderAddress.findOne({
+        where: { user_id: user.id }
+      });
+
       const result = {
         user_id: user.id,
         first_name: user.first_name,
@@ -99,7 +120,11 @@ module.exports = class ProviderController {
         phone_code: user.phone_code,
         phone_number: user.phone_number,
         gender: user.gender,
+        country_id: providerAddress?.country_id || null,
+        city_id: providerAddress?.city_id || null,
         verified_at: user.verified_at,
+        is_verified: user.is_verified,
+        user_type: user.user_type,
       };
 
       return response.success(
@@ -350,6 +375,11 @@ module.exports = class ProviderController {
         userType: "provider",
       };
 
+      // Get service provider address information
+      const serviceProviderAddress = await ServiceProviderAddress.findOne({
+        where: { user_id: user.id }
+      });
+
       const accessToken = await genrateToken(userObj);
       const result = {
         access_token: accessToken,
@@ -365,11 +395,11 @@ module.exports = class ProviderController {
           provider_type: serviceProvider.provider_type,
           salon_name: serviceProvider.salon_name,
           description: serviceProvider.description,
-          location: serviceProvider.location,
-          latitude: serviceProvider.latitude,
-          longitude: serviceProvider.longitude,
-          country_id: serviceProvider.country_id,
-          city_id: serviceProvider.city_id,
+          location: serviceProviderAddress?.address || null,
+          latitude: serviceProviderAddress?.latitude || null,
+          longitude: serviceProviderAddress?.longitude || null,
+          country_id: serviceProviderAddress?.country_id || null,
+          city_id: serviceProviderAddress?.city_id || null,
           step_completed: serviceProvider.step_completed,
           verified_at: user.verified_at,
           is_approved: serviceProvider.is_approved,
@@ -963,6 +993,11 @@ module.exports = class ProviderController {
       return response.badRequest("Provider account not found", res, false);
     }
 
+    // Get address information
+    const serviceProviderAddress = await ServiceProviderAddress.findOne({
+      where: { user_id: req.user.id }
+    });
+
     const serviceProviderObj = {
       id: serviceProvider.id,
       first_name: serviceProvider.first_name,
@@ -973,7 +1008,7 @@ module.exports = class ProviderController {
       phone_number: serviceProvider.phone_number,
       provider_type: serviceProvider.provider_type,
       salon_name: serviceProvider.salon_name,
-      city_id: serviceProvider.city_id,
+      city_id: serviceProviderAddress?.city_id || null,
       banner_image: serviceProvider.banner_image,
       description: serviceProvider.description,
       step_completed: serviceProvider.step_completed,
@@ -1020,6 +1055,11 @@ module.exports = class ProviderController {
       { id: req.provider.id }
     );
 
+    // Get address information
+    const serviceProviderAddress = await ServiceProviderAddress.findOne({
+      where: { user_id: req.user.id }
+    });
+
     const serviceProviderObj = {
       id: serviceProvider.id,
       first_name: serviceProvider.first_name,
@@ -1030,7 +1070,7 @@ module.exports = class ProviderController {
       phone_number: serviceProvider.phone_number,
       provider_type: serviceProvider.provider_type,
       salon_name: serviceProvider.salon_name,
-      city_id: serviceProvider.city_id,
+      city_id: serviceProviderAddress?.city_id || null,
       banner_image: serviceProvider.banner_image,
       description: serviceProvider.description,
       step_completed: serviceProvider.step_completed,
@@ -1059,13 +1099,12 @@ module.exports = class ProviderController {
     console.log("ProviderController@setServiceDetails");
     const data = {
       salon_name: req.body.salon_name,
-      city_id: req.body.city_id,
       banner_image: req.body.banner_image,
       description: req.body.description,
-      country_id: req.body.country_id,
       step_completed: 4,
     };
 
+    // Update ServiceProvider
     const serviceProviderUpdate = await providerResources.updateProvider(data, {
       id: req.provider.id,
     });
@@ -1077,9 +1116,41 @@ module.exports = class ProviderController {
       );
     }
 
+    // Update ServiceProviderAddress if city_id or country_id are provided
+    if (req.body.city_id || req.body.country_id) {
+      const serviceProviderAddress = await ServiceProviderAddress.findOne({
+        where: { user_id: req.user.id }
+      });
+
+      if (serviceProviderAddress) {
+        // Update existing address record
+        const addressUpdateData = {};
+        if (req.body.country_id) addressUpdateData.country_id = req.body.country_id;
+        if (req.body.city_id) addressUpdateData.city_id = req.body.city_id;
+        
+        await serviceProviderAddress.update(addressUpdateData);
+      } else {
+        // Create new address record
+        await ServiceProviderAddress.create({
+          user_id: req.user.id,
+          country_id: req.body.country_id || null,
+          city_id: req.body.city_id || null,
+          address: null, // Will be filled later
+          latitude: null, // Will be filled later
+          longitude: null, // Will be filled later
+        });
+      }
+    }
+
     const serviceProvider = await providerResources.getAllDetails({
       id: req.provider.id,
     });
+
+    // Get address information
+    const serviceProviderAddress = await ServiceProviderAddress.findOne({
+      where: { user_id: req.user.id }
+    });
+
     const serviceProviderObj = {
       id: serviceProvider.id,
       first_name: serviceProvider.first_name,
@@ -1090,7 +1161,7 @@ module.exports = class ProviderController {
       phone_number: serviceProvider.phone_number,
       provider_type: serviceProvider.provider_type,
       salon_name: serviceProvider.salon_name,
-      city_id: serviceProvider.city_id,
+      city_id: serviceProviderAddress?.city_id || null,
       banner_image: serviceProvider.banner_image,
       description: serviceProvider.description,
       step_completed: serviceProvider.step_completed,
@@ -1256,6 +1327,12 @@ module.exports = class ProviderController {
     const serviceProvider = await providerResources.getAllDetails({
       id: req.provider.id,
     });
+
+    // Get address information
+    const serviceProviderAddress = await ServiceProviderAddress.findOne({
+      where: { user_id: req.user.id }
+    });
+
     const serviceProviderObj = {
       id: serviceProvider.id,
       first_name: serviceProvider.first_name,
@@ -1266,7 +1343,7 @@ module.exports = class ProviderController {
       phone_number: serviceProvider.phone_number,
       provider_type: serviceProvider.provider_type,
       salon_name: serviceProvider.salon_name,
-      city_id: serviceProvider.city_id,
+      city_id: serviceProviderAddress?.city_id || null,
       banner_image: serviceProvider.banner_image,
       description: serviceProvider.description,
       step_completed: serviceProvider.step_completed,
@@ -1434,6 +1511,11 @@ module.exports = class ProviderController {
       return response.badRequest("Provider account not found", res, false);
     }
 
+    // Get address information
+    const serviceProviderAddress = await ServiceProviderAddress.findOne({
+      where: { user_id: serviceProvider.user_id }
+    });
+
     const serviceProviderObj = {
       id: serviceProvider.id,
       first_name: serviceProvider.first_name,
@@ -1444,7 +1526,7 @@ module.exports = class ProviderController {
       phone_number: serviceProvider.phone_number,
       provider_type: serviceProvider.provider_type,
       salon_name: serviceProvider.salon_name,
-      city_id: serviceProvider.city_id,
+      city_id: serviceProviderAddress?.city_id || null,
       banner_image: serviceProvider.banner_image,
       description: serviceProvider.description,
       step_completed: serviceProvider.step_completed,
@@ -1900,6 +1982,23 @@ module.exports = class ProviderController {
           subscription_expiry: subscriptionExpiry,
           step_completed: 1
         });
+
+        // Create service provider address record
+        try {
+          const serviceProviderAddressObj = {
+            user_id: userId,
+            country_id: null, // Will be filled later
+            city_id: null, // Will be filled later
+            address: null, // Will be filled later
+            latitude: null, // Will be filled later
+            longitude: null, // Will be filled later
+          };
+          await ServiceProviderAddress.create(serviceProviderAddressObj);
+          console.log("Service provider address created for user:", { id: userId });
+        } catch (error) {
+          console.error("Error creating service provider address:", error);
+          // Continue without failing step completion
+        }
       }
 
       const result = {
@@ -2094,10 +2193,8 @@ module.exports = class ProviderController {
         return response.badRequest("Salon name is required for salon providers", res, false);
       }
 
-      // Prepare update data
+      // Prepare update data for ServiceProvider
       const updateData = {
-        city_id: data.city_id,
-        country_id: data.country_id,
         description: data.description || null, // Description is optional
         step_completed: Math.max(serviceProvider.step_completed, 3) // Keep highest step completed
       };
@@ -2182,6 +2279,32 @@ module.exports = class ProviderController {
       console.log("Updating ServiceProvider...");
       await serviceProvider.update(updateData);
       console.log("ServiceProvider updated successfully");
+
+      // Update or create ServiceProviderAddress
+      console.log("Updating ServiceProviderAddress...");
+      const serviceProviderAddress = await ServiceProviderAddress.findOne({
+        where: { user_id: userId }
+      });
+
+      if (serviceProviderAddress) {
+        // Update existing address record
+        await serviceProviderAddress.update({
+          country_id: data.country_id,
+          city_id: data.city_id,
+        });
+        console.log("ServiceProviderAddress updated successfully");
+      } else {
+        // Create new address record
+        await ServiceProviderAddress.create({
+          user_id: userId,
+          country_id: data.country_id,
+          city_id: data.city_id,
+          address: null, // Will be filled later
+          latitude: null, // Will be filled later
+          longitude: null, // Will be filled later
+        });
+        console.log("ServiceProviderAddress created successfully");
+      }
 
       const result = {
         user_id: userId,

@@ -52,28 +52,7 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: true,
       },
-      country_id: {
-        // snake_case applied
-        type: Sequelize.INTEGER,
-        allowNull: false,
-        references: {
-          model: "countries", // Assuming you have a "countries" table
-          key: "id",
-        },
-        onUpdate: "CASCADE",
-        onDelete: "CASCADE",
-      },
-      city_id: {
-        // snake_case applied
-        type: Sequelize.INTEGER,
-        allowNull: false,
-        references: {
-          model: "cities", // Assuming you have a "cities" table
-          key: "id",
-        },
-        onUpdate: "CASCADE",
-        onDelete: "CASCADE",
-      },
+
       password: {
         type: Sequelize.STRING,
         allowNull: false,
@@ -104,18 +83,7 @@ module.exports = {
       },
       
 
-      latitude: {
-        type: Sequelize.DECIMAL(10, 7),
-        allowNull: true,
-      },
-      longitude: {
-        type: Sequelize.DECIMAL(10, 7),
-        allowNull: true,
-      },
-      location: {
-        type: Sequelize.STRING,
-        allowNull: true,
-      },
+
       status: {
         type: Sequelize.TINYINT,
         allowNull: false,

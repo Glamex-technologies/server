@@ -2,8 +2,7 @@ const _ = require('lodash')
 const Modles = require('../../../startup/model');
 const { where } = require('sequelize');
 const User = Modles.models.User;
-const Country = Modles.models.Country;
-const City = Modles.models.City;
+const UserAddress = Modles.models.UserAddress;
 const Token = Modles.models.Token;
 
 // UserResources class handles user-related database operations
@@ -21,21 +20,16 @@ module.exports = class UserResources {
     }
   }
 
-  // Get user details along with country and city info
+  // Get user details along with address info
   async getAllDetails(query) {
     try {
       const user = await User.findOne({
         where: query,
         include: [
           {
-            model: Country,
-            as: "country",
-            attributes: ['id', 'name'],
-          },
-          {
-            model: City,
-            as: "city",
-            attributes: ['id', 'name'],
+            model: UserAddress,
+            as: "addresses",
+            attributes: ['id', 'address', 'latitude', 'longitude', 'country_id', 'city_id'],
           },
         ],
       });
@@ -88,14 +82,9 @@ module.exports = class UserResources {
         attributes: attributes,
         include: [
           {
-            model: Country,
-            as: "country",
-            attributes: ['id', 'name'],
-          },
-          {
-            model: City,
-            as: "city",
-            attributes: ['id', 'name'],
+            model: UserAddress,
+            as: "addresses",
+            attributes: ['id', 'address', 'latitude', 'longitude', 'country_id', 'city_id'],
           },
         ],
       });
@@ -108,7 +97,7 @@ module.exports = class UserResources {
         User.count({ where: { ...query, status: 3 } }),
       ]);
       return {
-        service_providers: result.rows,
+        users: result.rows,
         active_users: activeCount,
         in_active_users: inactiveCount,
         blocked_users: blockedCount,

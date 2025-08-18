@@ -16,7 +16,7 @@ module.exports = class ServiceListValidator {
                 service_id: joi.number().min(1).required(),
                 category_id: joi.number().min(1).required(),
                 sub_category_id: joi.number().min(1).optional(),
-                service_location: joi.number().valid(1, 2).default(1),
+                service_location: joi.number().valid(1, 2, 3).default(1),
                 price: joi.number().min(0).precision(2).required(),
                 description: joi.string().min(2).max(500).optional(),
                 service_image: joi.string().uri().required()
@@ -48,7 +48,7 @@ module.exports = class ServiceListValidator {
                         title: joi.string().min(1).required(),
                         category_id: joi.number().min(1).required(),
                         sub_category_id: joi.number().min(1).optional(),
-                        service_location: joi.number().valid(1, 2).default(1),
+                        service_location: joi.number().valid(1, 2, 3).default(1),
                         price: joi.number().min(0).precision(2).required(),
                         description: joi.string().min(2).max(500).optional(),
                         service_image: joi.string().uri().required()
