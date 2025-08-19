@@ -1,11 +1,8 @@
 const bcrypt = require("bcrypt");
-const crypto = require("crypto");
 
 const { genrateToken } = require("../../helpers/jwtToken.helpers");
 const ResponseHelper = require("../../helpers/response.helpers");
 const AdminResources = require("./admin.resources");
-const db = require("../../../startup/model");
-const OtpVerification = db.models.OtpVerification;
 
 const response = new ResponseHelper();
 const adminResources = new AdminResources();
@@ -49,7 +46,7 @@ module.exports = class AdminController {
             };
             const accessToken = await genrateToken(adminObj);
             const result = {
-                accessToken: accessToken,
+                access_token: accessToken, // Changed from accessToken to access_token for consistency
                 admin: adminObj
             };
             return response.success("Admin authenticated successfully", res, result);
@@ -87,151 +84,6 @@ module.exports = class AdminController {
     }
 
     /**
-     * Send OTP to admin's email for password reset.
-     */
-    async forgotPassword(req, res) {
-        try {
-            console.log('AdminController@forgotPassword');
-            const data = req.body;
-            const admin = await adminResources.findOne({ email: data.email });
-            if (!admin) {
-                return response.badRequest('Admin not found', res, false);
-            }
-            // Create OTP for password reset using new system
-            try {
-                const otpRecord = await OtpVerification.createForEntity(
-                    'admin',
-                    admin.id,
-                    admin.email, // Using email as contact method for admin
-                    'password_reset'
-                );
-                console.log("Admin password reset OTP created:", {
-                    otp_code: otpRecord.otp_code,
-                    expires_at: otpRecord.expires_at,
-                });
-            } catch (error) {
-                console.error("Error creating admin password reset OTP:", error);
-                return response.exception("Failed to create OTP", res);
-            }
-            
-            const adminResult = admin; // Use existing admin data
-            const result = {
-                id: adminResult.id,
-                email: adminResult.email,
-            };
-            return response.success('OTP sent successfully', res, result);
-        } catch (error) {
-            console.error("Error in forgotPassword:", error);
-            return response.exception("Server error", res);
-        }
-    }
-
-    /**
-     * Verify OTP entered by the admin for password reset.
-     */
-    async verifyForgotPasswordOtp(req, res) {
-        try {
-            console.log('AdminController@verifyForgotPasswordOtp');
-            const data = req.body;
-            const admin = await adminResources.findOne({ id: data.admin_id });
-            if (!admin) {
-                return response.badRequest('Admin not found', res, false);
-            }
-            // Verify OTP using the new system
-            const verificationResult = await OtpVerification.verifyForEntity(
-                'admin',
-                admin.id,
-                String(data.otp),
-                'password_reset'
-            );
-
-            if (!verificationResult.success) {
-                return response.badRequest(verificationResult.message, res, false);
-            }
-
-            console.log("Admin password reset OTP verified successfully");
-            
-            const rememberToken = crypto.randomBytes(42).toString("hex").slice(0, 55);
-            await adminResources.updateAdmin(
-                { remember_token: rememberToken },
-                { id: data.admin_id }
-            );
-            const result = {
-                id: admin.id,
-                remember_token: rememberToken
-            };
-            return response.success('OTP Verified successfully', res, result);
-        } catch (error) {
-            console.error("Error in verifyForgotPasswordOtp:", error);
-            return response.exception("Server error", res);
-        }
-    }
-
-    /**
-     * Reset admin password after OTP verification.
-     */
-    async resetPassword(req, res) {
-        try {
-            console.log('AdminController@resetPassword');
-            const data = req.body;
-            const admin = await adminResources.findOne({ id: data.admin_id });
-            if (!admin) {
-                return response.badRequest('Admin not found', res, false);
-            }
-            if (admin.remember_token !== data.remember_token) {
-                return response.badRequest("Your password token got expired", res);
-            }
-            const hashedPassword = bcrypt.hashSync(data.password, 10);
-            await adminResources.updateAdmin(
-                { password: hashedPassword, remember_token: null },
-                { id: data.admin_id }
-            );
-            return response.success('Password updated successfully', res);
-        } catch (error) {
-            console.error("Error in resetPassword:", error);
-            return response.exception("Server error", res);
-        }
-    }
-
-    /**
-     * Resend OTP for password reset.
-     */
-    async resendOtp(req, res) {
-        try {
-            console.log('AdminController@resendOtp');
-            const data = req.query;
-            const admin = await adminResources.findOne({ id: data.admin_id });
-            if (!admin) {
-                return response.badRequest('Admin not found', res, false);
-            }
-            // Create new OTP using the new system
-            try {
-                const otpRecord = await OtpVerification.createForEntity(
-                    'admin',
-                    admin.id,
-                    admin.email, // Using email as contact method for admin
-                    'password_reset'
-                );
-                console.log("Admin resend OTP created:", {
-                    otp_code: otpRecord.otp_code,
-                    expires_at: otpRecord.expires_at,
-                });
-            } catch (error) {
-                console.error("Error creating admin resend OTP:", error);
-                return response.exception("Failed to create OTP", res);
-            }
-            const result = {
-                id: admin.id,
-                email: admin.email
-            };
-            return response.success('OTP resent successfully', res, result);
-        } catch (error) {
-            console.error("Error in resendOtp:", error);
-            return response.exception("Server error", res);
-        }
-    }
-
-    /**
      * Handle file uploads (e.g., to S3).
      */
     async uploadFiles(req, res) {
@@ -252,16 +104,16 @@ module.exports = class AdminController {
     }
 
     /**
-     * Log out the admin by invalidating the token.
+     * Logout admin (invalidate token)
      */
     async logOut(req, res) {
         try {
             console.log('AdminController@logOut');
             const authHeader = req.headers.authorization;
-            if (!authHeader || !authHeader.startsWith('Bearer ')) {
-                return response.forbidden('Authorization token missing', res);
+            if (!authHeader || !authHeader.startsWith("Bearer ")) {
+                return response.forbidden("Authorization token missing", res);
             }
-            const token = authHeader.split(' ')[1];
+            const token = authHeader.split(" ")[1];
             await adminResources.logOut({ token: token });
             return response.success("Admin logged out successfully", res);
         } catch (error) {
