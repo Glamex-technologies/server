@@ -13,7 +13,7 @@ router.get("/", userController.getWelcome); // Public welcome endpoint
 // User Registration //
 router.post("/register", userValidator.register, userController.register); // Register new user(done)
 router.post("/verify-verification-otp", [userValidator.verifyVerificationOtp], userController.verifyVerificationOtp); // Verify OTP during registration(done)
-router.patch("/resend-otp", [userValidator.resendOtp], userController.resendOtp); // Resend OTP - Update user with new OTP(done)
+router.post("/resend-otp", [userValidator.resendOtp], userController.resendOtp); // Resend OTP - Update user with new OTP(done)
 // User Registration //
 
 // Authentication
