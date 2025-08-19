@@ -36,6 +36,8 @@ router.post(
   [providerValidator.register],
   providerController.register
 );
+// Get countries and cities for location dropdowns
+router.get("/locations", [providerAuth], providerController.getLocations);
 router.post(
   "/verify-verification-otp",
   [providerValidator.verifyVerificationOtp],
@@ -134,20 +136,7 @@ router.post(
   providerController.step5WorkingHours
 );
 
-// Upload documents with AWS S3 (legacy)
-// router.post(
-//   "/upload-documents",
-//   [
-//     providerAuth,
-//     upload.fields([
-//       { name: "national_id_image_url", maxCount: 1 },
-//       { name: "freelance_certificate_image_url", maxCount: 1 },
-//       { name: "commercial_registration_image_url", maxCount: 1 },
-//       { name: "banner_image", maxCount: 1 },
-//     ]),
-//   ],
-//   providerController.uploadDocuments
-// );
+
 
 // Get available services from master catalog
 router.get(
@@ -156,8 +145,7 @@ router.get(
   providerController.getAvailableServices
 );
 
-// Get countries and cities for location dropdowns
-router.get("/locations", [providerAuth], providerController.getLocations);
+
 
 // Setup services for provider
 router.post(
@@ -173,19 +161,7 @@ router.post(
 
 
 
-// Set bank details
-router.post(
-  "/set-bank-details",
-  [providerAuth],
-  providerController.setBankDetails
-);
 
-// Set simple subscription (one-time payment)
-router.post(
-  "/set-subscription",
-  [providerAuth],
-  providerController.setSubscription
-);
 
 // Routes for authenticated providers (requires provider authentication)
 
