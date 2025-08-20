@@ -124,11 +124,20 @@ module.exports = class ProviderController {
     const data = req.body;
 
     try {
-      // Find user by user_id (no ServiceProvider exists yet)
-      const user = await User.findByPk(data.user_id);
+      // Find user by phone number combination
+      const user = await User.findOne({
+        where: {
+          phone_code: data.phone_code,
+          phone_number: data.phone_number,
+          user_type: "provider"
+        }
+      });
 
-      if (!user || user.user_type !== "provider") {
-        return response.badRequest("Provider user account not found", res, false);
+      if (!user) {
+        return response.notFound("Provider user account not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider account found with this phone number'
+        });
       }
 
       const verificationResult = await OtpVerification.verifyForEntity(
@@ -139,7 +148,23 @@ module.exports = class ProviderController {
       );
 
       if (!verificationResult.success) {
-        return response.badRequest(verificationResult.message, res, false);
+        // Enhanced error handling with specific status codes
+        if (verificationResult.message === 'OTP not found or expired') {
+          return response.unauthorized("OTP has expired or is invalid", res, {
+            error_code: 'OTP_EXPIRED',
+            message: 'The OTP has expired or is invalid. Please request a new one.'
+          });
+        } else if (verificationResult.message === 'Too many failed attempts') {
+          return response.forbidden("Too many failed OTP attempts", res, {
+            error_code: 'TOO_MANY_ATTEMPTS',
+            message: 'Too many failed attempts. Please request a new OTP.'
+          });
+        } else {
+          return response.unauthorized("Invalid OTP", res, {
+            error_code: 'INVALID_OTP',
+            message: 'The OTP you entered is incorrect.'
+          });
+        }
       }
 
       // Update user verification status and ensure user is active
@@ -180,7 +205,7 @@ module.exports = class ProviderController {
       );
     } catch (error) {
       console.error("Error in OTP verification:", error);
-      return response.exception(error.message, res);
+      return response.exception("Internal server error", res);
     }
   }
 
@@ -192,11 +217,45 @@ module.exports = class ProviderController {
     const data = req.body;
 
     try {
-      // Find user by user_id (no ServiceProvider exists yet)
-      const user = await User.findByPk(data.user_id);
+      // Find user by phone number combination
+      const user = await User.findOne({
+        where: {
+          phone_code: data.phone_code,
+          phone_number: data.phone_number,
+          user_type: "provider"
+        }
+      });
 
-      if (!user || user.user_type !== "provider") {
-        return response.badRequest("Provider user account not found", res, false);
+      if (!user) {
+        return response.notFound("Provider user account not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider account found with this phone number'
+        });
+      }
+
+      // Check rate limiting for OTP requests
+      try {
+        const recentOtps = await OtpVerification.count({
+          where: {
+            entity_type: 'provider',
+            entity_id: user.id,
+            purpose: 'registration',
+            created_at: {
+              [Op.gte]: new Date(Date.now() - 60 * 60 * 1000) // Last 1 hour
+            }
+          }
+        });
+
+        if (recentOtps >= 3) {
+          return response.custom(429, "Too many OTP requests", res, {
+            error_code: 'RATE_LIMIT_EXCEEDED',
+            message: 'You have exceeded the maximum OTP requests. Please try again later.',
+            retry_after: 3600 // 1 hour in seconds
+          });
+        }
+      } catch (error) {
+        console.error("Error checking rate limit:", error);
+        // Continue with OTP creation even if rate limit check fails
       }
 
       try {
@@ -223,14 +282,14 @@ module.exports = class ProviderController {
         phone_number: user.phone_number,
       };
 
-      return response.success(
+      return response.created(
         "OTP has been resent to your registered phone number",
         res,
         result
       );
     } catch (error) {
       console.error("Error in resending OTP:", error);
-      return response.exception(error.message, res);
+      return response.exception("Internal server error", res);
     }
   }
 
@@ -448,11 +507,20 @@ module.exports = class ProviderController {
     console.log("ProviderController@verifyForgotPasswordOtp");
     const data = req.body;
     
-    // Find user by user_id (no need to find ServiceProvider)
-    const user = await User.findByPk(data.user_id);
+    // Find user by phone number combination
+    const user = await User.findOne({
+      where: {
+        phone_code: data.phone_code,
+        phone_number: data.phone_number,
+        user_type: "provider"
+      }
+    });
 
     if (!user) {
-      return response.badRequest("User account not found", res, false);
+      return response.notFound("Provider user account not found", res, {
+        error_code: 'PROVIDER_NOT_FOUND',
+        message: 'No provider account found with this phone number'
+      });
     }
 
     // Verify OTP against user (not serviceProvider)
@@ -464,11 +532,29 @@ module.exports = class ProviderController {
     );
 
     if (!verificationResult.success) {
-      return response.badRequest(verificationResult.message, res, false);
+      // Enhanced error handling with specific status codes
+      if (verificationResult.message === 'OTP not found or expired') {
+        return response.unauthorized("OTP has expired or is invalid", res, {
+          error_code: 'OTP_EXPIRED',
+          message: 'The OTP has expired or is invalid. Please request a new one.'
+        });
+      } else if (verificationResult.message === 'Too many failed attempts') {
+        return response.forbidden("Too many failed OTP attempts", res, {
+          error_code: 'TOO_MANY_ATTEMPTS',
+          message: 'Too many failed attempts. Please request a new OTP.'
+        });
+      } else {
+        return response.unauthorized("Invalid OTP", res, {
+          error_code: 'INVALID_OTP',
+          message: 'The OTP you entered is incorrect.'
+        });
+      }
     }
 
     const result = {
       user_id: user.id,
+      phone_code: user.phone_code,
+      phone_number: user.phone_number,
     };
 
     return response.success(
@@ -485,11 +571,20 @@ module.exports = class ProviderController {
     console.log("ProviderController@resetPassword");
     const data = req.body;
     
-    // Find user directly by user_id (no need to find ServiceProvider)
-    const user = await User.findByPk(data.user_id);
+    // Find user by phone number combination
+    const user = await User.findOne({
+      where: {
+        phone_code: data.phone_code,
+        phone_number: data.phone_number,
+        user_type: "provider" // Ensure it's a provider user
+      }
+    });
 
     if (!user) {
-      return response.badRequest("User account not found", res, false);
+      return response.badRequest("Provider account not found", res, {
+        error_code: 'PROVIDER_NOT_FOUND',
+        message: 'No provider account found with this phone number'
+      });
     }
 
     // Update password directly in user table

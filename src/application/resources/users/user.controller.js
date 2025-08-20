@@ -107,9 +107,17 @@ module.exports = class UserController {
       const data = req.body;
       console.log("Verification request data:", data);
 
-      let user = await userResources.findOne({ id: data.user_id });
+      // Find user by phone number combination
+      let user = await userResources.findOne({ 
+        phone_code: data.phone_code,
+        phone_number: data.phone_number 
+      });
+      
       if (!user) {
-        return response.badRequest("User not found", res, false);
+        return response.notFound("User not found with the provided phone number", res, {
+          error_code: 'USER_NOT_FOUND',
+          message: 'No user account found with this phone number'
+        });
       }
 
       console.log("User found:", {
@@ -126,7 +134,23 @@ module.exports = class UserController {
       );
 
       if (!verificationResult.success) {
-        return response.badRequest(verificationResult.message, res, false);
+        // Enhanced error handling with specific status codes
+        if (verificationResult.message === 'OTP not found or expired') {
+          return response.unauthorized("OTP has expired or is invalid", res, {
+            error_code: 'OTP_EXPIRED',
+            message: 'The OTP has expired or is invalid. Please request a new one.'
+          });
+        } else if (verificationResult.message === 'Too many failed attempts') {
+          return response.forbidden("Too many failed OTP attempts", res, {
+            error_code: 'TOO_MANY_ATTEMPTS',
+            message: 'Too many failed attempts. Please request a new OTP.'
+          });
+        } else {
+          return response.unauthorized("Invalid OTP", res, {
+            error_code: 'INVALID_OTP',
+            message: 'The OTP you entered is incorrect.'
+          });
+        }
       }
 
       console.log("OTP verified successfully");
@@ -137,9 +161,9 @@ module.exports = class UserController {
           is_verified: 1,
           verified_at: new Date(),
         },
-        { id: data.user_id }
+        { id: user.id }
       );
-      // Prepare user object for token
+      
       // Get user address information
       const userAddress = await UserAddress.findOne({
         where: { user_id: user.id }
@@ -158,20 +182,22 @@ module.exports = class UserController {
         city_id: userAddress?.city_id || null,
         is_verified: user.is_verified,
       };
+      
       // Generate JWT token
       const accessToken = await genrateToken({ ...userObj, userType: "user" });
       const result = {
         access_token: accessToken,
         user: userObj,
       };
+      
       return response.success(
         "User verified and registered successfully",
         res,
         result
       );
     } catch (err) {
-      console.log(err);
-      return response.exception("server error", res);
+      console.error("Error in OTP verification:", err);
+      return response.exception("Internal server error", res);
     }
   }
 
@@ -179,9 +205,43 @@ module.exports = class UserController {
   async resendOtp(req, res) {
     console.log("UserController@resendOtp");
     const data = req.body;
-    let user = await userResources.findOne({ id: data.user_id });
+    
+    // Find user by phone number combination
+    let user = await userResources.findOne({ 
+      phone_code: data.phone_code,
+      phone_number: data.phone_number 
+    });
+    
     if (!user) {
-      return response.badRequest("User not found", res, false);
+      return response.notFound("User not found with the provided phone number", res, {
+        error_code: 'USER_NOT_FOUND',
+        message: 'No user account found with this phone number'
+      });
+    }
+
+    // Check rate limiting for OTP requests
+    try {
+      const recentOtps = await OtpVerification.count({
+        where: {
+          entity_type: 'user',
+          entity_id: user.id,
+          purpose: 'registration',
+          created_at: {
+            [Op.gte]: new Date(Date.now() - 60 * 60 * 1000) // Last 1 hour
+          }
+        }
+      });
+
+      if (recentOtps >= 3) {
+        return response.custom(429, "Too many OTP requests", res, {
+          error_code: 'RATE_LIMIT_EXCEEDED',
+          message: 'You have exceeded the maximum OTP requests. Please try again later.',
+          retry_after: 3600 // 1 hour in seconds
+        });
+      }
+    } catch (error) {
+      console.error("Error checking rate limit:", error);
+      // Continue with OTP creation even if rate limit check fails
     }
 
     // Create new OTP using the new system
@@ -200,6 +260,7 @@ module.exports = class UserController {
       console.error("Error creating OTP:", error);
       return response.exception("Failed to create OTP", res);
     }
+    
     const result = {
       id: user.id,
       first_name: user.first_name,
@@ -210,7 +271,8 @@ module.exports = class UserController {
       phone_code: user.phone_code,
       phone_number: user.phone_number,
     };
-    return response.success("OTP resent successfully", res, result);
+    
+    return response.created("OTP resent successfully", res, result);
   }
 
   // Authenticate user (login)
@@ -336,10 +398,20 @@ module.exports = class UserController {
   async verifyForgotPasswordOtp(req, res) {
     console.log("UserController@verifyForgotPasswordOtp");
     const data = req.body;
-    let user = await userResources.findOne({ id: data.user_id });
+    
+    // Find user by phone number combination
+    let user = await userResources.findOne({ 
+      phone_code: data.phone_code,
+      phone_number: data.phone_number 
+    });
+    
     if (!user) {
-      return response.badRequest("User not found", res, false);
+      return response.notFound("User not found with the provided phone number", res, {
+        error_code: 'USER_NOT_FOUND',
+        message: 'No user account found with this phone number'
+      });
     }
+    
     // Verify OTP using the new system
     const verificationResult = await OtpVerification.verifyForEntity(
       "user",
@@ -349,29 +421,60 @@ module.exports = class UserController {
     );
 
     if (!verificationResult.success) {
-      return response.badRequest(verificationResult.message, res, false);
+      // Enhanced error handling with specific status codes
+      if (verificationResult.message === 'OTP not found or expired') {
+        return response.unauthorized("OTP has expired or is invalid", res, {
+          error_code: 'OTP_EXPIRED',
+          message: 'The OTP has expired or is invalid. Please request a new one.'
+        });
+      } else if (verificationResult.message === 'Too many failed attempts') {
+        return response.forbidden("Too many failed OTP attempts", res, {
+          error_code: 'TOO_MANY_ATTEMPTS',
+          message: 'Too many failed attempts. Please request a new OTP.'
+        });
+      } else {
+        return response.unauthorized("Invalid OTP", res, {
+          error_code: 'INVALID_OTP',
+          message: 'The OTP you entered is incorrect.'
+        });
+      }
     }
 
     console.log("Password reset OTP verified successfully");
     const result = {
       id: user.id,
+      phone_code: user.phone_code,
+      phone_number: user.phone_number,
     };
-    return response.success("user verified successfully", res, result);
+    
+    return response.success("User verified successfully", res, result);
   }
 
   // Reset password after OTP verification
   async resetPassword(req, res) {
     console.log("UserController@resetPassword");
     const data = req.body;
-    let user = await userResources.findOne({ id: data.user_id });
+    
+    // Find user by phone number combination
+    let user = await userResources.findOne({ 
+      phone_code: data.phone_code, 
+      phone_number: data.phone_number 
+    });
+    
     if (!user) {
-      return response.badRequest("User not found", res, false);
+      return response.badRequest("User not found", res, {
+        error_code: 'USER_NOT_FOUND',
+        message: 'No user account found with this phone number'
+      });
     }
+    
+    // Update password
     const hashedPassword = bcrypt.hashSync(data.password, 10);
     user = await userResources.updateUser(
       { password: hashedPassword },
-      { id: data.user_id }
+      { id: user.id }
     );
+    
     return response.success("Password updated successfully", res, null);
   }
 

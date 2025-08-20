@@ -159,14 +159,28 @@ module.exports = class ProviderValidator {
     try {
       // Define validation schema for OTP verification
       let schema = {
-        user_id: joi.number().required().min(1),
-        otp: joi.string().length(4).pattern(/^\d+$/).required(),
+        phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
+          'string.pattern.base': 'Phone code must be 1-4 digits',
+          'any.required': 'Phone code is required'
+        }),
+        phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
+          'string.pattern.base': 'Phone number must be 6-15 digits',
+          'any.required': 'Phone number is required'
+        }),
+        otp: joi.string().length(4).pattern(/^\d+$/).required().messages({
+          'string.length': 'OTP must be exactly 4 digits',
+          'string.pattern.base': 'OTP must contain only digits',
+          'any.required': 'OTP is required'
+        }),
       };
 
       // Validate request body against schema
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
-        return response.validationError("invalid request", res, errors[0]);
+        return response.validationError("Validation failed", res, {
+          error_code: 'VALIDATION_ERROR',
+          details: errors[0]
+        });
       }
 
       next();
@@ -187,13 +201,23 @@ module.exports = class ProviderValidator {
     try {
       // Define validation schema for OTP resend
       let schema = {
-        user_id: joi.number().required().min(1),
+        phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
+          'string.pattern.base': 'Phone code must be 1-4 digits',
+          'any.required': 'Phone code is required'
+        }),
+        phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
+          'string.pattern.base': 'Phone number must be 6-15 digits',
+          'any.required': 'Phone number is required'
+        }),
       };
 
       // Validate request body against schema
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
-        return response.validationError("invalid request", res, errors[0]);
+        return response.validationError("Validation failed", res, {
+          error_code: 'VALIDATION_ERROR',
+          details: errors[0]
+        });
       }
 
       next();
@@ -428,14 +452,28 @@ module.exports = class ProviderValidator {
     try {
       // Define validation schema for forgot password OTP verification
       let schema = {
-        user_id: joi.number().required().min(1),
-        otp: joi.string().length(4).pattern(/^\d+$/).required(),
+        phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
+          'string.pattern.base': 'Phone code must be 1-4 digits',
+          'any.required': 'Phone code is required'
+        }),
+        phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
+          'string.pattern.base': 'Phone number must be 6-15 digits',
+          'any.required': 'Phone number is required'
+        }),
+        otp: joi.string().length(4).pattern(/^\d+$/).required().messages({
+          'string.length': 'OTP must be exactly 4 digits',
+          'string.pattern.base': 'OTP must contain only digits',
+          'any.required': 'OTP is required'
+        }),
       };
 
       // Validate request body against schema
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
-        return response.validationError("invalid request", res, errors[0]);
+        return response.validationError("Validation failed", res, {
+          error_code: 'VALIDATION_ERROR',
+          details: errors[0]
+        });
       }
 
       next();
@@ -456,7 +494,14 @@ module.exports = class ProviderValidator {
     try {
       // Define validation schema for password reset
       let schema = {
-        user_id: joi.number().required().min(1),
+        phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
+          'string.pattern.base': 'Phone code must be 1-4 digits',
+          'any.required': 'Phone code is required'
+        }),
+        phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
+          'string.pattern.base': 'Phone number must be 6-15 digits',
+          'any.required': 'Phone number is required'
+        }),
         password: joi
           .string()
           .required()
@@ -478,7 +523,26 @@ module.exports = class ProviderValidator {
       // Validate request body against schema
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
-        return response.validationError("invalid request", res, errors[0]);
+        return response.validationError("Validation failed", res, {
+          error_code: 'VALIDATION_ERROR',
+          details: errors[0]
+        });
+      }
+
+      // Check if user exists and is a provider
+      const db = require("../../../startup/model");
+      let user = await db.models.User.findOne({
+        where: {
+          phone_code: req.body.phone_code,
+          phone_number: req.body.phone_number,
+          user_type: "provider", // Ensure it's a provider user
+        },
+      });
+      if (!user) {
+        return response.validationError("Provider account not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider account found with this phone number'
+        });
       }
 
       next();
