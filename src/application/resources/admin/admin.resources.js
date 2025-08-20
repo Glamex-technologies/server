@@ -57,17 +57,18 @@ module.exports = class AdminResources {
   }
 
   /**
-   * Logs out the admin by destroying the token(s) matching the query.
+   * Log out admin by destroying token(s)
    * 
    * @param {Object} query - Sequelize where clause to find tokens.
    * @returns {Promise<Number>} - Returns number of destroyed token records.
    */
   async logOut(query) {
     try {
+      console.log('AdminResources@logOut - Starting token invalidation');
       return await Token.destroy({ where: query });
-    } catch (err) {
-      console.log('Error in logOut:', err);
-      throw err;
+    } catch (error) {
+      console.error('AdminResources@logOut - Error during token invalidation:', error);
+      throw error;
     }
   }
 

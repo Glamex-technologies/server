@@ -27,82 +27,83 @@ const handleEmptyBody = (req, res, next) => {
   next();
 };
 
+// ========================================
+// BASIC ROUTES
+// ========================================
+
 // Route for welcome message or basic get
 router.get("/", providerController.getWelcome);
 
-// Provider authentication routes (original provider system)
+// ========================================
+// AUTHENTICATION & REGISTRATION ROUTES
+// ========================================
+
+// Provider registration
 router.post(
   "/register",
   [providerValidator.register],
   providerController.register
 );
+
+// OTP verification for registration
 router.post(
   "/verify-verification-otp",
   [providerValidator.verifyVerificationOtp],
   providerController.verifyVerificationOtp
 );
+
+// Resend OTP
 router.post(
   "/resend-otp",
   [providerValidator.resendOtp],
   providerController.resendOtp
 );
+
+// Provider login/authentication
 router.post(
   "/authenticate",
   [providerValidator.authenticate],
   providerController.authenticate
 );
+
+// Password recovery flow
 router.post(
   "/forgot-password",
   [providerValidator.forgotPassword],
   providerController.forgotPassword
 );
+
 router.post(
   "/verify-forgot-password-otp",
   [providerValidator.verifyForgotPasswordOtp],
   providerController.verifyForgotPasswordOtp
 );
+
 router.post(
   "/reset-password",
   [providerValidator.resetPassword],
   providerController.resetPassword
 );
 
-// Subscription Payment (requires provider authentication)
+// ========================================
+// ONBOARDING & SETUP ROUTES
+// ========================================
+
+// Step 1: Subscription Payment (requires provider authentication)
 router.post(
   "/subscription-payment",
   [handleEmptyBody, providerAuth, providerValidator.step1SubscriptionPayment],
   providerController.step1SubscriptionPayment
 );
 
-// Set Provider Type (requires provider authentication)
+// Step 2: Set Provider Type (requires provider authentication)
 router.post(
   "/provider-type",
   [providerAuth, providerValidator.step2ProviderType],
   providerController.step2ProviderType
 );
 
-// Get available predefined banner images
-router.get(
-  "/banner-images",
-  [providerAuth],
-  providerController.getBannerImages
-);
-
-// Get available predefined service images
-router.get(
-  "/service-images",
-  [providerAuth],
-  providerController.getServiceImages
-);
-
-// Get available service locations
-router.get(
-  "/service-locations",
-  [providerAuth],
-  providerController.getServiceLocations
-);
-
-// Set Salon Details (requires provider authentication)
+// Step 3: Set Salon Details (requires provider authentication)
 router.post(
   "/salon-or-indiviual-detail",
   [
@@ -113,7 +114,7 @@ router.post(
   providerController.step3SalonDetails
 );
 
-// Upload documents and bank details
+// Step 4: Upload documents and bank details
 router.post(
   "/upload-documents-and-bank-details",
   [
@@ -134,60 +135,29 @@ router.post(
   providerController.step5WorkingHours
 );
 
-// Upload documents with AWS S3 (legacy)
-// router.post(
-//   "/upload-documents",
-//   [
-//     providerAuth,
-//     upload.fields([
-//       { name: "national_id_image_url", maxCount: 1 },
-//       { name: "freelance_certificate_image_url", maxCount: 1 },
-//       { name: "commercial_registration_image_url", maxCount: 1 },
-//       { name: "banner_image", maxCount: 1 },
-//     ]),
-//   ],
-//   providerController.uploadDocuments
-// );
-
-// Get available services from master catalog
-router.get(
-  "/available-services",
-  [providerAuth],
-  providerController.getAvailableServices
-);
-
-// Get countries and cities for location dropdowns
-router.get("/locations", [providerAuth], providerController.getLocations);
-
-// Setup services for provider
+// Step 6: Setup services for provider
 router.post(
   "/setup-services",
   [
     providerAuth,
     upload.fields([
-      { name: "service_images", maxCount: 10 } // Allow multiple service images
-    ])
+      { name: "service_images", maxCount: 10 }, // Allow multiple service images
+    ]),
   ],
   providerController.setupServices
 );
 
 
 
-// Set bank details
-router.post(
-  "/set-bank-details",
-  [providerAuth],
-  providerController.setBankDetails
-);
+// ========================================
+// PROVIDER PROFILE MANAGEMENT ROUTES
+// ========================================
 
-// Set simple subscription (one-time payment)
-router.post(
-  "/set-subscription",
-  [providerAuth],
-  providerController.setSubscription
-);
+// Get provider profile (for authenticated providers)
+router.get("/profile", [providerAuth], providerController.getProvider);
 
-// Routes for authenticated providers (requires provider authentication)
+// Update provider profile
+router.put("/profile", [providerAuth], providerController.updateProvider);
 
 // Toggle availability status
 router.post(
@@ -196,12 +166,6 @@ router.post(
   providerController.toggleAvailability
 );
 
-// Get provider profile (for authenticated providers)
-router.get("/profile", [providerAuth], providerController.getProvider);
-
-// Update provider profile
-router.put("/profile", [providerAuth], providerController.updateProvider);
-
 // Change password
 router.post(
   "/change-password",
@@ -209,10 +173,30 @@ router.post(
   providerController.changePassword
 );
 
-// Logout
-router.post("/logout", [providerAuth], providerController.logOut);
+// Enhanced Logout with optional rate limiting
+// Uncomment the rate limiting middleware below for additional security
+// const { createLogoutRateLimiter } = require("../../middlewares/rateLimit.middleware");
+// const logoutRateLimiter = createLogoutRateLimiter(15 * 60 * 1000, 5); // 5 logout attempts per 15 minutes
 
-// Routes below require admin authentication and validation
+router.post(
+  "/logout",
+  [
+    // logoutRateLimiter, // Uncomment to enable rate limiting
+    providerAuth,
+  ],
+  providerController.logOut
+);
+
+// Route for provider to delete their own account
+router.delete(
+  "/delete-my-account",
+  [providerAuth],
+  providerController.deleteMyAccount
+);
+
+// ========================================
+// ADMIN MANAGEMENT ROUTES
+// ========================================
 
 // Route to get all providers with admin auth and validation
 router.get("/get-all", [adminAuth], providerController.getAllProviders);
@@ -229,15 +213,6 @@ router.get(
   "/admin/get-provider/:provider_id",
   [adminAuth],
   providerController.getProvider
-);
-
-// Routes for provider management (authenticated users with provider profiles)
-
-// Route for provider to delete their own account
-router.delete(
-  "/delete-my-account",
-  [providerAuth],
-  providerController.deleteMyAccount
 );
 
 module.exports = router;

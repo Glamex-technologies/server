@@ -22,6 +22,8 @@ const ServiceImage = require("../application/models/serviceImage.model");
 const ServiceLocation = require("../application/models/serviceLocation.model");
 const UserAddress = require("../application/models/userAddress.model");
 const ServiceProviderAddress = require("../application/models/serviceProviderAddress.model");
+const Booking = require("../application/models/booking.model");
+const BookingService = require("../application/models/bookingService.model");
 
 const models = {
   Token: Token(sequelize, Sequelize.DataTypes),
@@ -44,6 +46,8 @@ const models = {
   ServiceLocation: ServiceLocation(sequelize, Sequelize.DataTypes),
   UserAddress: UserAddress(sequelize, Sequelize.DataTypes),
   ServiceProviderAddress: ServiceProviderAddress(sequelize, Sequelize.DataTypes),
+  Booking: Booking(sequelize, Sequelize.DataTypes),
+  BookingService: BookingService(sequelize, Sequelize.DataTypes),
 };
 
 Object.values(models)

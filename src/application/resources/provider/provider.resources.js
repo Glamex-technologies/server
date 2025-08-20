@@ -1,5 +1,6 @@
 const _ = require('lodash');
 const Modles = require('../../../startup/model');
+const db = require('../../../startup/model');
 const { where } = require('sequelize');
 
 const ServiceProvider = Modles.models.ServiceProvider;
@@ -220,16 +221,66 @@ module.exports = class ProviderResources {
   }
 
   /**
-   * Delete tokens matching the query to log out a user/session
+   * Enhanced token invalidation with transaction safety and comprehensive error handling
    * @param {Object} query - Where clause for tokens to destroy
    * @returns {Promise<Number>} - Number of destroyed tokens
    */
   async logOut(query) {
+    const transaction = await db.transaction();
+    
     try {
-      return await Token.destroy({ where: query });
-    } catch (err) {
-      console.log(err);
-      throw err;
+      console.log('ProviderResources@logOut - Starting token invalidation');
+      
+      // Validate input parameters
+      if (!query || !query.token) {
+        throw new Error('Token parameter is required for logout');
+      }
+
+      // Verify token exists before deletion
+      const existingToken = await Token.findOne({ 
+        where: query,
+        transaction: transaction 
+      });
+
+      if (!existingToken) {
+        console.log('ProviderResources@logOut - Token not found in database');
+        await transaction.rollback();
+        return 0;
+      }
+
+      console.log('ProviderResources@logOut - Token found, proceeding with deletion');
+
+      // Check if token is already expired
+      if (new Date() > existingToken.expires_at) {
+        console.log('ProviderResources@logOut - Token already expired, deleting anyway');
+      }
+
+      // Perform token deletion within transaction
+      const deletedCount = await Token.destroy({ 
+        where: query,
+        transaction: transaction 
+      });
+
+      // Commit transaction
+      await transaction.commit();
+
+      console.log(`ProviderResources@logOut - Successfully deleted ${deletedCount} token(s)`);
+      
+      return deletedCount;
+
+    } catch (error) {
+      // Rollback transaction on error
+      await transaction.rollback();
+      
+      console.error('ProviderResources@logOut - Error during token invalidation:', {
+        error: error.message,
+        stack: error.stack,
+        query: query,
+        timestamp: new Date().toISOString()
+      });
+
+      // Re-throw error for controller to handle
+      throw error;
     }
   }
 
