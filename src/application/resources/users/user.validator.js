@@ -97,18 +97,32 @@ module.exports = class UserValidator {
 
     /**
      * Validates OTP verification request
-     * Checks user ID and OTP format
+     * Checks phone number combination and OTP format
      */
     async verifyVerificationOtp(req, res, next) {
-        console.log('UserValidator@register');
+        console.log('UserValidator@verifyVerificationOtp');
         try {
             let schema = {
-                user_id: joi.number().required().min(1),
-                otp: joi.string().length(4).pattern(/^\d+$/).required()
+                phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
+                    'string.pattern.base': 'Phone code must be 1-4 digits',
+                    'any.required': 'Phone code is required'
+                }),
+                phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
+                    'string.pattern.base': 'Phone number must be 6-15 digits',
+                    'any.required': 'Phone number is required'
+                }),
+                otp: joi.string().length(4).pattern(/^\d+$/).required().messages({
+                    'string.length': 'OTP must be exactly 4 digits',
+                    'string.pattern.base': 'OTP must contain only digits',
+                    'any.required': 'OTP is required'
+                })
             }
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
-                return response.validationError('invalid request', res, errors[0])
+                return response.validationError('Validation failed', res, {
+                    error_code: 'VALIDATION_ERROR',
+                    details: errors[0]
+                });
             }
             next();
         } catch (err) {
@@ -119,17 +133,27 @@ module.exports = class UserValidator {
 
     /**
      * Validates OTP resend request
-     * Checks user ID exists
+     * Checks phone number combination and rate limiting
      */
     async resendOtp(req, res, next) {
         console.log('UserValidator@resendOtp');
         try {
             let schema = {
-                user_id: joi.number().required().min(1)
+                phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
+                    'string.pattern.base': 'Phone code must be 1-4 digits',
+                    'any.required': 'Phone code is required'
+                }),
+                phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
+                    'string.pattern.base': 'Phone number must be 6-15 digits',
+                    'any.required': 'Phone number is required'
+                })
             }
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
-                return response.validationError('invalid request', res, errors[0])
+                return response.validationError('Validation failed', res, {
+                    error_code: 'VALIDATION_ERROR',
+                    details: errors[0]
+                });
             }
             next();
         } catch (err) {
@@ -166,18 +190,32 @@ module.exports = class UserValidator {
 
     /**
      * Validates forgot password OTP verification
-     * Checks user ID and OTP format
+     * Checks phone number combination and OTP format
      */
     async verifyForgotPasswordOtp(req, res, next) {
         console.log('UserValidator@verifyForgotPasswordOtp');
         try {
             let schema = {
-                user_id: joi.number().required().min(1),
-                otp: joi.string().length(4).pattern(/^\d+$/).required()
+                phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
+                    'string.pattern.base': 'Phone code must be 1-4 digits',
+                    'any.required': 'Phone code is required'
+                }),
+                phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
+                    'string.pattern.base': 'Phone number must be 6-15 digits',
+                    'any.required': 'Phone number is required'
+                }),
+                otp: joi.string().length(4).pattern(/^\d+$/).required().messages({
+                    'string.length': 'OTP must be exactly 4 digits',
+                    'string.pattern.base': 'OTP must contain only digits',
+                    'string.empty': 'OTP is required'
+                })
             }
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
-                return response.validationError('invalid request', res, errors[0])
+                return response.validationError('Validation failed', res, {
+                    error_code: 'VALIDATION_ERROR',
+                    details: errors[0]
+                });
             }
             next();
         } catch (err) {
@@ -188,13 +226,20 @@ module.exports = class UserValidator {
 
     /**
      * Validates password reset request
-     * Checks user ID and new password requirements
+     * Checks phone number combination and new password requirements
      */
     async resetPassword(req, res, next) {
         console.log('UserValidator@resetPassword');
         try {
             let schema = {
-                user_id: joi.number().required().min(1),
+                phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
+                    'string.pattern.base': 'Phone code must be 1-4 digits',
+                    'any.required': 'Phone code is required'
+                }),
+                phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
+                    'string.pattern.base': 'Phone number must be 6-15 digits',
+                    'any.required': 'Phone number is required'
+                }),
                 password: joi.string().required().min(8).pattern(new RegExp('^(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$')).required().messages({
                     'string.empty': 'Password is required.',
                     'string.min': 'Password must be at least 8 characters long.',
@@ -203,7 +248,22 @@ module.exports = class UserValidator {
             }
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
-                return response.validationError('invalid request', res, errors[0])
+                return response.validationError('Validation failed', res, {
+                    error_code: 'VALIDATION_ERROR',
+                    details: errors[0]
+                });
+            }
+            
+            // Verify user exists with the provided phone number
+            let user = await userResources.findOne({ 
+                phone_code: req.body.phone_code, 
+                phone_number: req.body.phone_number 
+            });
+            if (!user) {
+                return response.validationError('User not found', res, {
+                    error_code: 'USER_NOT_FOUND',
+                    message: 'No user account found with this phone number'
+                });
             }
             next();
         } catch (err) {
