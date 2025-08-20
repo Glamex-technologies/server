@@ -100,8 +100,6 @@ module.exports = class ProviderValidator {
           }),
         gender: joi.number().valid(1, 2, 3).required(),
         terms_and_condition: joi.number().valid(1).required(),
-        country_id: joi.number().min(1).optional(),
-        city_id: joi.number().min(1).optional(),
       };
 
       // Validate request body against schema
@@ -800,6 +798,7 @@ module.exports = class ProviderValidator {
       let schema = {
         city_id: joi.number().integer().min(1).required(),
         country_id: joi.number().integer().min(1).required(),
+        address: joi.string().required().min(10).max(500).trim(),
         description: joi.string().optional().allow(null, '').max(1000),
         banner_image_id: joi.number().integer().min(1).optional().allow(null)
       };
