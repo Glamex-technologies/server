@@ -147,40 +147,7 @@ router.post(
   providerController.setupServices
 );
 
-// ========================================
-// REFERENCE DATA ROUTES
-// ========================================
 
-// Get countries and cities for location dropdowns
-router.get("/locations", [providerAuth], providerController.getLocations);
-
-// Get available predefined banner images
-router.get(
-  "/banner-images",
-  [providerAuth],
-  providerController.getBannerImages
-);
-
-// Get available predefined service images
-router.get(
-  "/service-images",
-  [providerAuth],
-  providerController.getServiceImages
-);
-
-// Get available service locations
-router.get(
-  "/service-locations",
-  [providerAuth],
-  providerController.getServiceLocations
-);
-
-// Get available services from master catalog
-router.get(
-  "/available-services",
-  [providerAuth],
-  providerController.getAvailableServices
-);
 
 // ========================================
 // PROVIDER PROFILE MANAGEMENT ROUTES
