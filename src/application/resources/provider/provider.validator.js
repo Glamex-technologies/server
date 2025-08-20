@@ -100,8 +100,6 @@ module.exports = class ProviderValidator {
           }),
         gender: joi.number().valid(1, 2, 3).required(),
         terms_and_condition: joi.number().valid(1).required(),
-        country_id: joi.number().min(1).optional(),
-        city_id: joi.number().min(1).optional(),
       };
 
       // Validate request body against schema

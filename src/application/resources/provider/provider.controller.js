@@ -73,22 +73,7 @@ module.exports = class ProviderController {
 
       const user = await User.create(userData);
 
-      // Create address record for the provider user
-      try {
-        const addressObj = {
-          user_id: user.id,
-          country_id: data.country_id || 1, // Default to first country if not provided
-          city_id: data.city_id || 1, // Default to first city if not provided
-          address: null, // Will be filled later
-          latitude: null, // Will be filled later
-          longitude: null, // Will be filled later
-        };
-        await ServiceProviderAddress.create(addressObj);
-        console.log("Provider address created for user:", { id: user.id });
-      } catch (error) {
-        console.error("Error creating provider address:", error);
-        // Continue without failing registration
-      }
+      // Note: Address record will be created later during onboarding process
 
       // Step 2: Create OTP using the user's phone number (not provider ID)
       try {
@@ -106,11 +91,6 @@ module.exports = class ProviderController {
         console.error("Error creating provider user OTP:", error);
       }
 
-      // Get provider address information for response
-      const providerAddress = await ServiceProviderAddress.findOne({
-        where: { user_id: user.id }
-      });
-
       const result = {
         user_id: user.id,
         first_name: user.first_name,
@@ -120,8 +100,6 @@ module.exports = class ProviderController {
         phone_code: user.phone_code,
         phone_number: user.phone_number,
         gender: user.gender,
-        country_id: providerAddress?.country_id || null,
-        city_id: providerAddress?.city_id || null,
         verified_at: user.verified_at,
         is_verified: user.is_verified,
         user_type: user.user_type,
@@ -2421,6 +2399,549 @@ module.exports = class ProviderController {
     }
   }
 
+  /**
+   * Get onboarding progress and current step data
+   * Returns overall onboarding status and next step information
+   */
+  async getOnboardingProgress(req, res) {
+    console.log("ProviderController@getOnboardingProgress");
+    const user = req.user;
+    const provider = req.provider;
+
+    try {
+      if (!provider) {
+        return response.success("Onboarding not started", res, {
+          onboarding_status: "not_started",
+          current_step: 0,
+          total_steps: 6,
+          next_step: "subscription_payment",
+          can_edit: false,
+          message: "Please start the onboarding process"
+        });
+      }
+
+      const currentStep = provider.step_completed || 0;
+      const nextStep = currentStep < 6 ? currentStep + 1 : null;
+      
+      const stepNames = {
+        1: "subscription_payment",
+        2: "provider_type",
+        3: "salon_details", 
+        4: "documents_bank",
+        5: "working_hours",
+        6: "services_setup"
+      };
+
+      const responseData = {
+        onboarding_status: currentStep === 6 ? "completed" : "in_progress",
+        current_step: currentStep,
+        total_steps: 6,
+        next_step: nextStep ? stepNames[nextStep] : null,
+        can_edit: true,
+        step_completion: {
+          subscription_payment: currentStep >= 1,
+          provider_type: currentStep >= 2,
+          salon_details: currentStep >= 3,
+          documents_bank: currentStep >= 4,
+          working_hours: currentStep >= 5,
+          services_setup: currentStep >= 6
+        },
+        provider_id: provider.id,
+        provider_type: provider.provider_type,
+        is_approved: provider.is_approved === 1,
+        subscription_expiry: provider.subscription_expiry,
+        message: currentStep === 6 ? "Onboarding completed successfully" : `Complete step ${nextStep} to continue`
+      };
+
+      return response.success("Onboarding progress retrieved successfully", res, responseData);
+    } catch (error) {
+      console.error("Error getting onboarding progress:", error);
+      return response.exception("Failed to retrieve onboarding progress", res);
+    }
+  }
+
+  /**
+   * Get Step 1: Subscription Payment data
+   */
+  async getStep1SubscriptionPayment(req, res) {
+    console.log("ProviderController@getStep1SubscriptionPayment");
+    const user = req.user;
+    const provider = req.provider;
+
+    try {
+      if (!provider) {
+        return response.badRequest("Provider profile not found. Please start onboarding first.", res, false);
+      }
+
+      const responseData = {
+        step: 1,
+        step_name: "subscription_payment",
+        status: provider.step_completed >= 1 ? "completed" : "incomplete",
+        can_edit: true,
+        data: {
+          subscription_id: provider.subscription_id,
+          subscription_expiry: provider.subscription_expiry,
+          payment_status: provider.subscription_id > 0 ? "paid" : "pending"
+        },
+        next_step: provider.step_completed >= 1 ? "provider_type" : null,
+        message: provider.step_completed >= 1 ? "Subscription payment completed" : "Subscription payment required"
+      };
+
+      return response.success("Step 1 data retrieved successfully", res, responseData);
+    } catch (error) {
+      console.error("Error getting Step 1 data:", error);
+      return response.exception("Failed to retrieve Step 1 data", res);
+    }
+  }
+
+  /**
+   * Get Step 2: Provider Type data
+   */
+  async getStep2ProviderType(req, res) {
+    console.log("ProviderController@getStep2ProviderType");
+    const user = req.user;
+    const provider = req.provider;
+
+    try {
+      if (!provider) {
+        return response.badRequest("Provider profile not found. Please start onboarding first.", res, false);
+      }
+
+      // Check if prerequisite step is completed
+      if (provider.step_completed < 1) {
+        return response.badRequest("Please complete subscription payment first", res, false);
+      }
+
+      const responseData = {
+        step: 2,
+        step_name: "provider_type",
+        status: provider.step_completed >= 2 ? "completed" : "incomplete",
+        can_edit: provider.step_completed >= 2,
+        data: {
+          provider_type: provider.provider_type,
+          available_types: ["individual", "salon"]
+        },
+        next_step: provider.step_completed >= 2 ? "salon_details" : null,
+        message: provider.step_completed >= 2 ? "Provider type set successfully" : "Provider type selection required"
+      };
+
+      return response.success("Step 2 data retrieved successfully", res, responseData);
+    } catch (error) {
+      console.error("Error getting Step 2 data:", error);
+      return response.exception("Failed to retrieve Step 2 data", res);
+    }
+  }
+
+  /**
+   * Get Step 3: Salon Details data
+   */
+  async getStep3SalonDetails(req, res) {
+    console.log("ProviderController@getStep3SalonDetails");
+    const user = req.user;
+    const provider = req.provider;
+
+    try {
+      if (!provider) {
+        return response.badRequest("Provider profile not found. Please start onboarding first.", res, false);
+      }
+
+      // Check if prerequisite steps are completed
+      if (provider.step_completed < 2) {
+        return response.badRequest("Please complete provider type selection first", res, false);
+      }
+
+      // Get address information
+      const serviceProviderAddress = await ServiceProviderAddress.findOne({
+        where: { user_id: user.id }
+      });
+
+      const responseData = {
+        step: 3,
+        step_name: "salon_details",
+        status: provider.step_completed >= 3 ? "completed" : "incomplete",
+        can_edit: provider.step_completed >= 3,
+        data: {
+          salon_name: provider.salon_name,
+          description: provider.description,
+          banner_image: provider.banner_image,
+          country_id: serviceProviderAddress?.country_id || null,
+          city_id: serviceProviderAddress?.city_id || null,
+          address: serviceProviderAddress?.address || null,
+          latitude: serviceProviderAddress?.latitude || null,
+          longitude: serviceProviderAddress?.longitude || null
+        },
+        next_step: provider.step_completed >= 3 ? "documents_bank" : null,
+        message: provider.step_completed >= 3 ? "Salon details completed" : "Salon details required"
+      };
+
+      return response.success("Step 3 data retrieved successfully", res, responseData);
+    } catch (error) {
+      console.error("Error getting Step 3 data:", error);
+      return response.exception("Failed to retrieve Step 3 data", res);
+    }
+  }
+
+  /**
+   * Get Step 4: Documents and Bank Details data
+   */
+  async getStep4DocumentsBank(req, res) {
+    console.log("ProviderController@getStep4DocumentsBank");
+    const user = req.user;
+    const provider = req.provider;
+
+    try {
+      if (!provider) {
+        return response.badRequest("Provider profile not found. Please start onboarding first.", res, false);
+      }
+
+      // Check if prerequisite steps are completed
+      if (provider.step_completed < 3) {
+        return response.badRequest("Please complete salon details first", res, false);
+      }
+
+      // Get bank details
+      const bankDetails = await BankDetails.findOne({
+        where: { service_provider_id: provider.id }
+      });
+
+      const responseData = {
+        step: 4,
+        step_name: "documents_bank",
+        status: provider.step_completed >= 4 ? "completed" : "incomplete",
+        can_edit: provider.step_completed >= 4,
+        data: {
+          documents: {
+            national_id_image_url: provider.national_id_image_url,
+            freelance_certificate_image_url: provider.freelance_certificate_image_url,
+            commercial_registration_image_url: provider.commercial_registration_image_url
+          },
+          bank_details: bankDetails ? {
+            id: bankDetails.id,
+            account_holder_name: bankDetails.account_holder_name,
+            bank_name: bankDetails.bank_name,
+            iban: bankDetails.iban
+          } : null,
+          required_documents: {
+            national_id: true,
+            freelance_certificate: provider.provider_type === 'individual',
+            commercial_registration: provider.provider_type === 'salon'
+          }
+        },
+        next_step: provider.step_completed >= 4 ? "working_hours" : null,
+        message: provider.step_completed >= 4 ? "Documents and bank details completed" : "Documents and bank details required"
+      };
+
+      return response.success("Step 4 data retrieved successfully", res, responseData);
+    } catch (error) {
+      console.error("Error getting Step 4 data:", error);
+      return response.exception("Failed to retrieve Step 4 data", res);
+    }
+  }
+
+  /**
+   * Get Step 5: Working Hours data
+   */
+  async getStep5WorkingHours(req, res) {
+    console.log("ProviderController@getStep5WorkingHours");
+    const user = req.user;
+    const provider = req.provider;
+
+    try {
+      if (!provider) {
+        return response.badRequest("Provider profile not found. Please start onboarding first.", res, false);
+      }
+
+      // Check if prerequisite steps are completed
+      if (provider.step_completed < 4) {
+        return response.badRequest("Please complete documents and bank details first", res, false);
+      }
+
+      // Get availability data
+      const availability = await ServiceProviderAvailability.findAll({
+        where: { service_provider_id: provider.id },
+        order: [
+          ['day', 'ASC']
+        ]
+      });
+
+      const responseData = {
+        step: 5,
+        step_name: "working_hours",
+        status: provider.step_completed >= 5 ? "completed" : "incomplete",
+        can_edit: provider.step_completed >= 5,
+        data: {
+          availability: availability.map(avail => ({
+            id: avail.id,
+            day: avail.day,
+            from_time: avail.from_time,
+            to_time: avail.to_time,
+            available: avail.available
+          })),
+          days_of_week: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        },
+        next_step: provider.step_completed >= 5 ? "services_setup" : null,
+        message: provider.step_completed >= 5 ? "Working hours completed" : "Working hours setup required"
+      };
+
+      return response.success("Step 5 data retrieved successfully", res, responseData);
+    } catch (error) {
+      console.error("Error getting Step 5 data:", error);
+      return response.exception("Failed to retrieve Step 5 data", res);
+    }
+  }
+
+  /**
+   * Get Step 6: Services Setup data
+   */
+  async getStep6ServicesSetup(req, res) {
+    console.log("ProviderController@getStep6ServicesSetup");
+    const user = req.user;
+    const provider = req.provider;
+
+    try {
+      if (!provider) {
+        return response.badRequest("Provider profile not found. Please start onboarding first.", res, false);
+      }
+
+      // Check if prerequisite steps are completed
+      if (provider.step_completed < 5) {
+        return response.badRequest("Please complete working hours setup first", res, false);
+      }
+
+      // Get services data with related information
+      const services = await ServiceList.findAll({
+        where: { service_provider_id: provider.id },
+        include: [
+          {
+            model: db.models.Category,
+            as: 'category',
+            attributes: ['id', 'title', 'image']
+          },
+          {
+            model: db.models.subcategory,
+            as: 'subcategory',
+            attributes: ['id', 'title', 'image']
+          },
+          {
+            model: db.models.ServiceLocation,
+            as: 'location',
+            attributes: ['id', 'title', 'description']
+          }
+        ],
+        order: [['created_at', 'DESC']]
+      });
+
+      const responseData = {
+        step: 6,
+        step_name: "services_setup",
+        status: provider.step_completed >= 6 ? "completed" : "incomplete",
+        can_edit: provider.step_completed >= 6,
+        data: {
+          services: services.map(service => ({
+            id: service.id,
+            title: service.title,
+            service_id: service.service_id,
+            category_id: service.category_id,
+            sub_category_id: service.sub_category_id,
+            price: service.price,
+            description: service.description,
+            service_image: service.service_image,
+            service_location: service.service_location,
+            is_sub_service: service.is_sub_service,
+            have_offers: service.have_offers,
+            status: service.status,
+            category: service.category,
+            subcategory: service.subcategory,
+            location: service.location
+          })),
+          total_services: services.length
+        },
+        next_step: provider.step_completed >= 6 ? "onboarding_complete" : null,
+        message: provider.step_completed >= 6 ? "Services setup completed" : "Services setup required"
+      };
+
+      return response.success("Step 6 data retrieved successfully", res, responseData);
+    } catch (error) {
+      console.error("Error getting Step 6 data:", error);
+      return response.exception("Failed to retrieve Step 6 data", res);
+    }
+  }
+
+  /**
+   * Get complete onboarding data for all steps
+   */
+  async getCompleteOnboardingData(req, res) {
+    console.log("ProviderController@getCompleteOnboardingData");
+    const user = req.user;
+    const provider = req.provider;
+
+    try {
+      if (!provider) {
+        return response.success("Onboarding not started", res, {
+          onboarding_status: "not_started",
+          current_step: 0,
+          total_steps: 6,
+          steps: {},
+          message: "Please start the onboarding process"
+        });
+      }
+
+      // Get all related data in parallel for efficiency
+      const [serviceProviderAddress, bankDetails, availability, services] = await Promise.all([
+        ServiceProviderAddress.findOne({ where: { user_id: user.id } }),
+        BankDetails.findOne({ where: { service_provider_id: provider.id } }),
+        ServiceProviderAvailability.findAll({
+          where: { service_provider_id: provider.id },
+          order: [['day', 'ASC']]
+        }),
+        ServiceList.findAll({
+          where: { service_provider_id: provider.id },
+          include: [
+            {
+              model: db.models.Category,
+              as: 'category',
+              attributes: ['id', 'title', 'image']
+            },
+            {
+              model: db.models.subcategory,
+              as: 'subcategory',
+              attributes: ['id', 'title', 'image']
+            },
+            {
+              model: db.models.ServiceLocation,
+              as: 'location',
+              attributes: ['id', 'title', 'description']
+            }
+          ],
+          order: [['created_at', 'DESC']]
+        })
+      ]);
+
+      const currentStep = provider.step_completed || 0;
+
+      const responseData = {
+        onboarding_status: currentStep === 6 ? "completed" : "in_progress",
+        current_step: currentStep,
+        total_steps: 6,
+        provider_id: provider.id,
+        provider_type: provider.provider_type,
+        is_approved: provider.is_approved === 1,
+        subscription_expiry: provider.subscription_expiry,
+        steps: {
+          step_1: {
+            step: 1,
+            step_name: "subscription_payment",
+            status: currentStep >= 1 ? "completed" : "incomplete",
+            can_edit: true,
+            data: {
+              subscription_id: provider.subscription_id,
+              subscription_expiry: provider.subscription_expiry,
+              payment_status: provider.subscription_id > 0 ? "paid" : "pending"
+            }
+          },
+          step_2: {
+            step: 2,
+            step_name: "provider_type",
+            status: currentStep >= 2 ? "completed" : "incomplete",
+            can_edit: currentStep >= 2,
+            data: {
+              provider_type: provider.provider_type,
+              available_types: ["individual", "salon"]
+            }
+          },
+          step_3: {
+            step: 3,
+            step_name: "salon_details",
+            status: currentStep >= 3 ? "completed" : "incomplete",
+            can_edit: currentStep >= 3,
+            data: {
+              salon_name: provider.salon_name,
+              description: provider.description,
+              banner_image: provider.banner_image,
+              country_id: serviceProviderAddress?.country_id || null,
+              city_id: serviceProviderAddress?.city_id || null,
+              address: serviceProviderAddress?.address || null,
+              latitude: serviceProviderAddress?.latitude || null,
+              longitude: serviceProviderAddress?.longitude || null
+            }
+          },
+          step_4: {
+            step: 4,
+            step_name: "documents_bank",
+            status: currentStep >= 4 ? "completed" : "incomplete",
+            can_edit: currentStep >= 4,
+            data: {
+              documents: {
+                national_id_image_url: provider.national_id_image_url,
+                freelance_certificate_image_url: provider.freelance_certificate_image_url,
+                commercial_registration_image_url: provider.commercial_registration_image_url
+              },
+              bank_details: bankDetails ? {
+                id: bankDetails.id,
+                account_holder_name: bankDetails.account_holder_name,
+                bank_name: bankDetails.bank_name,
+                iban: bankDetails.iban
+              } : null,
+              required_documents: {
+                national_id: true,
+                freelance_certificate: provider.provider_type === 'individual',
+                commercial_registration: provider.provider_type === 'salon'
+              }
+            }
+          },
+          step_5: {
+            step: 5,
+            step_name: "working_hours",
+            status: currentStep >= 5 ? "completed" : "incomplete",
+            can_edit: currentStep >= 5,
+            data: {
+              availability: availability.map(avail => ({
+                id: avail.id,
+                day: avail.day,
+                from_time: avail.from_time,
+                to_time: avail.to_time,
+                available: avail.available
+              })),
+              days_of_week: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+            }
+          },
+          step_6: {
+            step: 6,
+            step_name: "services_setup",
+            status: currentStep >= 6 ? "completed" : "incomplete",
+            can_edit: currentStep >= 6,
+            data: {
+              services: services.map(service => ({
+                id: service.id,
+                title: service.title,
+                service_id: service.service_id,
+                category_id: service.category_id,
+                sub_category_id: service.sub_category_id,
+                price: service.price,
+                description: service.description,
+                service_image: service.service_image,
+                service_location: service.service_location,
+                is_sub_service: service.is_sub_service,
+                have_offers: service.have_offers,
+                status: service.status,
+                category: service.category,
+                subcategory: service.subcategory,
+                location: service.location
+              })),
+              total_services: services.length
+            }
+          }
+        },
+        next_step: currentStep < 6 ? currentStep + 1 : null,
+        message: currentStep === 6 ? "Onboarding completed successfully" : `Complete step ${currentStep + 1} to continue`
+      };
+
+      return response.success("Complete onboarding data retrieved successfully", res, responseData);
+    } catch (error) {
+      console.error("Error getting complete onboarding data:", error);
+      return response.exception("Failed to retrieve complete onboarding data", res);
+    }
+  }
 
 }
 

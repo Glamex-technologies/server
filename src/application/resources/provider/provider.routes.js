@@ -147,7 +147,65 @@ router.post(
   providerController.setupServices
 );
 
+// ========================================
+// ONBOARDING GET ROUTES (Same endpoints, different HTTP methods)
+// ========================================
 
+// Get overall onboarding progress
+router.get(
+  "/onboarding-progress",
+  [providerAuth],
+  providerController.getOnboardingProgress
+);
+
+// Get complete onboarding data for all steps
+router.get(
+  "/onboarding-data",
+  [providerAuth],
+  providerController.getCompleteOnboardingData
+);
+
+// Get Step 1: Subscription Payment data (same endpoint as POST)
+router.get(
+  "/subscription-payment",
+  [providerAuth],
+  providerController.getStep1SubscriptionPayment
+);
+
+// Get Step 2: Provider Type data (same endpoint as POST)
+router.get(
+  "/provider-type",
+  [providerAuth],
+  providerController.getStep2ProviderType
+);
+
+// Get Step 3: Salon Details data (same endpoint as POST)
+router.get(
+  "/salon-or-indiviual-detail",
+  [providerAuth],
+  providerController.getStep3SalonDetails
+);
+
+// Get Step 4: Documents and Bank Details data (same endpoint as POST)
+router.get(
+  "/upload-documents-and-bank-details",
+  [providerAuth],
+  providerController.getStep4DocumentsBank
+);
+
+// Get Step 5: Working Hours data (same endpoint as POST)
+router.get(
+  "/working-days-and-hours",
+  [providerAuth],
+  providerController.getStep5WorkingHours
+);
+
+// Get Step 6: Services Setup data (same endpoint as POST)
+router.get(
+  "/setup-services",
+  [providerAuth],
+  providerController.getStep6ServicesSetup
+);
 
 // ========================================
 // PROVIDER PROFILE MANAGEMENT ROUTES
