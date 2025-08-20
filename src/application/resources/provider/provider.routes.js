@@ -212,7 +212,7 @@ router.get(
 // ========================================
 
 // Get provider profile (for authenticated providers)
-router.get("/profile", [providerAuth], providerController.getProvider);
+router.get("/profile", [providerAuth], providerController.getProviderProfile);
 
 // Update provider profile
 router.put("/profile", [providerAuth], providerController.updateProvider);

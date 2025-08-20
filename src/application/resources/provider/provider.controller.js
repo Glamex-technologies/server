@@ -1536,7 +1536,259 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Get detailed information about a specific provider
+   * Get comprehensive provider profile with all related data (for authenticated providers)
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @returns {Object} JSON response with provider profile data
+   */
+  async getProviderProfile(req, res) {
+    console.log("ProviderController@getProviderProfile");
+    const provider = req.provider;
+    const user = req.user;
+
+    try {
+      // Get basic provider details first (without includes to avoid association errors)
+      const basicProvider = await ServiceProvider.findByPk(provider.id);
+      
+      if (!basicProvider) {
+        return response.notFound("Provider profile not found", res);
+      }
+
+      // Get user details separately
+      const userDetails = await User.findByPk(user.id, {
+        attributes: [
+          "id",
+          "first_name",
+          "last_name",
+          "full_name",
+          "email",
+          "phone_code",
+          "phone_number",
+          "gender",
+          "is_verified",
+          "verified_at",
+          "profile_image",
+          "status",
+          "notification"
+        ]
+      });
+
+      // Get address details separately (if exists)
+      let addressDetails = null;
+      try {
+        const address = await ServiceProviderAddress.findOne({
+          where: { user_id: user.id },
+          include: [
+            {
+              model: db.models.Country,
+              as: "country",
+              attributes: ["id", "name"],
+            },
+            {
+              model: db.models.City,
+              as: "city",
+              attributes: ["id", "name"],
+            },
+          ],
+        });
+        
+        if (address) {
+          addressDetails = {
+            id: address.id,
+            address: address.address,
+            latitude: address.latitude,
+            longitude: address.longitude,
+            country_id: address.country_id,
+            city_id: address.city_id,
+            country: address.country ? {
+              id: address.country.id,
+              name: address.country.name
+            } : null,
+            city: address.city ? {
+              id: address.city.id,
+              name: address.city.name
+            } : null
+          };
+        }
+      } catch (addressError) {
+        console.log("Address not found or error:", addressError.message);
+        addressDetails = null;
+      }
+
+      // Get bank details separately (if exists)
+      let bankDetails = [];
+      try {
+        const bankDetailsData = await BankDetails.findAll({
+          where: { service_provider_id: provider.id },
+          attributes: [
+            "id",
+            "bank_name",
+            "account_number",
+            "account_holder_name",
+            "iban",
+            "swift_code"
+          ],
+        });
+        
+        bankDetails = bankDetailsData.map(bank => ({
+          id: bank.id,
+          bank_name: bank.bank_name,
+          account_number: bank.account_number,
+          account_holder_name: bank.account_holder_name,
+          iban: bank.iban,
+          swift_code: bank.swift_code
+        }));
+      } catch (bankError) {
+        console.log("Bank details not found or error:", bankError.message);
+        bankDetails = [];
+      }
+
+      // Get availability separately (if exists)
+      let availability = [];
+      try {
+        const availabilityData = await ServiceProviderAvailability.findAll({
+          where: { service_provider_id: provider.id },
+          attributes: [
+            "id",
+            "day",
+            "from_time",
+            "to_time",
+            "available",
+            "is_break"
+          ],
+        });
+        
+        availability = availabilityData.map(avail => ({
+          id: avail.id,
+          day: avail.day,
+          from_time: avail.from_time,
+          to_time: avail.to_time,
+          available: avail.available,
+          is_break: avail.is_break
+        }));
+      } catch (availabilityError) {
+        console.log("Availability not found or error:", availabilityError.message);
+        availability = [];
+      }
+
+      // Get services separately (if exists)
+      let services = [];
+      try {
+        const servicesData = await ServiceList.findAll({
+          where: { service_provider_id: provider.id },
+          include: [
+            {
+              model: db.models.Service,
+              as: "service",
+              attributes: ["id", "name", "description", "price", "duration"],
+            },
+          ],
+        });
+        
+        services = servicesData.map(service => ({
+          id: service.id,
+          service_id: service.service_id,
+          price: service.price,
+          duration: service.duration,
+          description: service.description,
+          service_image: service.service_image,
+          service: service.service ? {
+            id: service.service.id,
+            name: service.service.name,
+            description: service.service.description,
+            price: service.service.price,
+            duration: service.service.duration
+          } : null
+        }));
+      } catch (servicesError) {
+        console.log("Services not found or error:", servicesError.message);
+        services = [];
+      }
+
+      // Get gallery separately (if exists)
+      let gallery = [];
+      try {
+        const galleryData = await db.models.Gallery.findAll({
+          where: { service_provider_id: provider.id },
+          attributes: ["id", "image_url", "title", "description"],
+        });
+        
+        gallery = galleryData.map(img => ({
+          id: img.id,
+          image_url: img.image_url,
+          title: img.title,
+          description: img.description
+        }));
+      } catch (galleryError) {
+        console.log("Gallery not found or error:", galleryError.message);
+        gallery = [];
+      }
+
+      // Transform the data into the required format
+      const profileData = {
+        // Basic Provider Info
+        id: basicProvider.id,
+        provider_type: basicProvider.provider_type,
+        salon_name: basicProvider.salon_name,
+        description: basicProvider.description,
+        banner_image: basicProvider.banner_image,
+        step_completed: basicProvider.step_completed,
+        is_approved: basicProvider.is_approved,
+        is_available: basicProvider.is_available,
+        overall_rating: basicProvider.overall_rating,
+        total_reviews: basicProvider.total_reviews,
+        total_bookings: basicProvider.total_bookings,
+        total_customers: basicProvider.total_customers,
+        notification: basicProvider.notification,
+        subscription_expiry: basicProvider.subscription_expiry,
+        
+        // Documents
+        national_id_image_url: basicProvider.national_id_image_url,
+        freelance_certificate_image_url: basicProvider.freelance_certificate_image_url,
+        commercial_registration_image_url: basicProvider.commercial_registration_image_url,
+        
+        // User Info
+        user: userDetails ? {
+          id: userDetails.id,
+          first_name: userDetails.first_name,
+          last_name: userDetails.last_name,
+          full_name: userDetails.full_name,
+          email: userDetails.email,
+          phone_code: userDetails.phone_code,
+          phone_number: userDetails.phone_number,
+          gender: userDetails.gender,
+          is_verified: userDetails.is_verified,
+          verified_at: userDetails.verified_at,
+          profile_image: userDetails.profile_image,
+          status: userDetails.status,
+          notification: userDetails.notification
+        } : null,
+        
+        // Address Info
+        address: addressDetails,
+        
+        // Bank Details
+        bank_details: bankDetails,
+        
+        // Availability
+        availability: availability,
+        
+        // Services
+        services: services,
+        
+        // Gallery
+        gallery: gallery
+      };
+
+      return response.success("Provider profile retrieved successfully", res, profileData);
+    } catch (error) {
+      console.error("Error getting provider profile:", error);
+      return response.exception("Failed to retrieve provider profile", res);
+    }
+  }
+
+  /**
+   * Get provider details (for admin use - keeping the original method for admin routes)
    */
   async getProvider(req, res) {
     console.log("ProviderController@getProvider");
@@ -2049,132 +2301,6 @@ module.exports = class ProviderController {
       return response.exception(error.message, res);
     }
   }
-
-  /**
-   * Get provider profile with all related data (for authenticated providers)
-   */
-  async getProvider(req, res) {
-    console.log("ProviderController@getProvider");
-    const provider = req.provider;
-    const user = req.user;
-
-    try {
-      // Get full provider details with all related data
-      const fullProvider = await ServiceProvider.findByPk(provider.id, {
-        include: [
-          {
-            model: User,
-            as: "user",
-            attributes: [
-              "id",
-              "first_name",
-              "last_name",
-              "email",
-              "phone_code",
-              "phone_number",
-              "verified_at",
-              "is_verified",
-            ],
-          },
-          {
-            model: db.models.Country,
-            as: "country",
-            attributes: ["id", "name"],
-          },
-          {
-            model: db.models.City,
-            as: "city",
-            attributes: ["id", "name"],
-          },
-          {
-            model: BankDetails,
-            as: "bankDetails",
-          },
-          {
-            model: ServiceProviderAvailability,
-            as: "availability",
-          },
-          {
-            model: ServiceList,
-            as: "services",
-          },
-        ],
-      });
-
-      if (!fullProvider) {
-        return response.notFound("Provider profile not found", res);
-      }
-
-      return response.success("Provider profile retrieved successfully", res, {
-        provider: fullProvider,
-      });
-    } catch (error) {
-      console.error("Error getting provider:", error);
-      return response.exception(error.message, res);
-    }
-  }
-
-  /**
-   * Update provider profile (for authenticated providers)
-   */
-  async updateProvider(req, res) {
-    console.log("ProviderController@updateProvider");
-    const provider = req.provider;
-    const updateData = req.body;
-
-    try {
-      // Filter allowed update fields including location data
-      const allowedFields = [
-        "provider_type",
-        "salon_name",
-        "description",
-        "location",
-        "latitude",
-        "longitude",
-        "country_id",
-        "city_id",
-        "banner_image",
-        "is_available",
-        "notification",
-      ];
-
-      const filteredData = {};
-      allowedFields.forEach((field) => {
-        if (updateData.hasOwnProperty(field)) {
-          filteredData[field] = updateData[field];
-        }
-      });
-
-      await provider.update(filteredData);
-
-      return response.success("Provider profile updated successfully", res, {
-        provider: await ServiceProvider.findByPk(provider.id, {
-          include: [
-            {
-              model: User,
-              as: "user",
-              attributes: ["id", "first_name", "last_name", "email"],
-            },
-            {
-              model: db.models.Country,
-              as: "country",
-              attributes: ["id", "name"],
-            },
-            {
-              model: db.models.City,
-              as: "city",
-              attributes: ["id", "name"],
-            },
-          ],
-        }),
-      });
-    } catch (error) {
-      console.error("Error updating provider:", error);
-      return response.exception(error.message, res);
-    }
-  }
-
-
 
   /**
    * Subscription Payment
