@@ -209,6 +209,127 @@ class S3Helper {
   }
 
   /**
+   * Delete image with its thumbnail from S3
+   * @param {string} imageUrl - Full S3 URL of the main image
+   * @returns {Promise<Object>} - Delete result for both main and thumbnail
+   */
+  async deleteImageWithThumbnail(imageUrl) {
+    try {
+      if (!imageUrl) {
+        throw new Error('Image URL is required');
+      }
+
+      // Extract S3 key from URL
+      const mainKey = this.extractS3KeyFromUrl(imageUrl);
+      if (!mainKey) {
+        throw new Error('Invalid S3 URL format');
+      }
+
+      // Generate thumbnail key
+      const thumbnailKey = this.generateThumbnailKey(mainKey);
+
+      // Delete both main image and thumbnail
+      const deletePromises = [
+        this.deleteFile(mainKey),
+        this.deleteFile(thumbnailKey)
+      ];
+
+      const results = await Promise.allSettled(deletePromises);
+      
+      const mainResult = results[0].status === 'fulfilled' ? results[0].value : { success: false, error: results[0].reason };
+      const thumbnailResult = results[1].status === 'fulfilled' ? results[1].value : { success: false, error: results[1].reason };
+
+      return {
+        success: mainResult.success || thumbnailResult.success,
+        main: mainResult,
+        thumbnail: thumbnailResult,
+        mainKey: mainKey,
+        thumbnailKey: thumbnailKey
+      };
+
+    } catch (error) {
+      console.error('S3 delete image with thumbnail error:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Extract S3 key from S3 URL
+   * @param {string} s3Url - Full S3 URL
+   * @returns {string|null} - S3 key or null if invalid URL
+   */
+  extractS3KeyFromUrl(s3Url) {
+    try {
+      if (!s3Url) return null;
+
+      // Handle different S3 URL formats
+      let key = null;
+
+      // Format: https://bucket-name.s3.region.amazonaws.com/key
+      if (s3Url.includes('.s3.') && s3Url.includes('.amazonaws.com')) {
+        const urlParts = s3Url.split('.s3.');
+        if (urlParts.length >= 2) {
+          const afterS3 = urlParts[1];
+          const keyStart = afterS3.indexOf('.amazonaws.com/');
+          if (keyStart !== -1) {
+            key = afterS3.substring(keyStart + '.amazonaws.com/'.length);
+          }
+        }
+      }
+      // Format: https://s3.region.amazonaws.com/bucket-name/key
+      else if (s3Url.includes('s3.') && s3Url.includes('.amazonaws.com/')) {
+        const parts = s3Url.split('.amazonaws.com/');
+        if (parts.length >= 2) {
+          const afterDomain = parts[1];
+          const slashIndex = afterDomain.indexOf('/');
+          if (slashIndex !== -1) {
+            key = afterDomain.substring(slashIndex + 1);
+          }
+        }
+      }
+
+      // Remove any query parameters
+      if (key && key.includes('?')) {
+        key = key.split('?')[0];
+      }
+
+      return key || null;
+
+    } catch (error) {
+      console.error('Error extracting S3 key from URL:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Generate thumbnail key from main image key
+   * @param {string} mainKey - Main image S3 key
+   * @returns {string} - Thumbnail S3 key
+   */
+  generateThumbnailKey(mainKey) {
+    if (!mainKey) return null;
+
+    const ext = path.extname(mainKey);
+    const baseKey = mainKey.replace(ext, '');
+    return `${baseKey}_thumb${ext}`;
+  }
+
+  /**
+   * Check if URL is a custom uploaded image (not a predefined one)
+   * @param {string} imageUrl - Image URL to check
+   * @returns {boolean} - True if it's a custom uploaded image
+   */
+  isCustomUploadedImage(imageUrl) {
+    if (!imageUrl) return false;
+
+    // Check if it's an S3 URL (custom uploaded)
+    return imageUrl.includes('.s3.') && imageUrl.includes('.amazonaws.com');
+  }
+
+  /**
    * Generate presigned URL for secure uploads (for client-side uploads)
    * @param {string} fileName - File name
    * @param {string} contentType - MIME type

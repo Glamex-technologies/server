@@ -520,6 +520,12 @@ module.exports = class ProviderController {
     const bankDetails = req.body;
 
     try {
+      // Store old document URLs for cleanup
+      const oldDocumentUrls = {
+        national_id_image_url: provider.national_id_image_url,
+        freelance_certificate_image_url: provider.freelance_certificate_image_url,
+        commercial_registration_image_url: provider.commercial_registration_image_url
+      };
       // Validate required fields based on provider type
       const errors = [];
       
@@ -692,6 +698,70 @@ module.exports = class ProviderController {
         next_step: "service_setup"
       };
 
+      // Clean up old document images if they were custom uploads
+      console.log("Cleaning up old document images...");
+      const cleanupPromises = [];
+
+      // Clean up national ID image
+      if (oldDocumentUrls.national_id_image_url && s3Helper.isCustomUploadedImage(oldDocumentUrls.national_id_image_url)) {
+        console.log("Cleaning up old national ID image:", oldDocumentUrls.national_id_image_url);
+        cleanupPromises.push(
+          s3Helper.deleteImageWithThumbnail(oldDocumentUrls.national_id_image_url)
+            .then(result => {
+              if (result.success) {
+                console.log("Old national ID image cleanup successful");
+              } else {
+                console.log("Old national ID image cleanup failed:", result.error);
+              }
+            })
+            .catch(error => {
+              console.error("Error during national ID image cleanup:", error);
+            })
+        );
+      }
+
+      // Clean up freelance certificate image
+      if (oldDocumentUrls.freelance_certificate_image_url && s3Helper.isCustomUploadedImage(oldDocumentUrls.freelance_certificate_image_url)) {
+        console.log("Cleaning up old freelance certificate image:", oldDocumentUrls.freelance_certificate_image_url);
+        cleanupPromises.push(
+          s3Helper.deleteImageWithThumbnail(oldDocumentUrls.freelance_certificate_image_url)
+            .then(result => {
+              if (result.success) {
+                console.log("Old freelance certificate image cleanup successful");
+              } else {
+                console.log("Old freelance certificate image cleanup failed:", result.error);
+              }
+            })
+            .catch(error => {
+              console.error("Error during freelance certificate image cleanup:", error);
+            })
+        );
+      }
+
+      // Clean up commercial registration image
+      if (oldDocumentUrls.commercial_registration_image_url && s3Helper.isCustomUploadedImage(oldDocumentUrls.commercial_registration_image_url)) {
+        console.log("Cleaning up old commercial registration image:", oldDocumentUrls.commercial_registration_image_url);
+        cleanupPromises.push(
+          s3Helper.deleteImageWithThumbnail(oldDocumentUrls.commercial_registration_image_url)
+            .then(result => {
+              if (result.success) {
+                console.log("Old commercial registration image cleanup successful");
+              } else {
+                console.log("Old commercial registration image cleanup failed:", result.error);
+              }
+            })
+            .catch(error => {
+              console.error("Error during commercial registration image cleanup:", error);
+            })
+        );
+      }
+
+      // Wait for all cleanup operations to complete (but don't fail if they don't)
+      if (cleanupPromises.length > 0) {
+        await Promise.allSettled(cleanupPromises);
+        console.log("Document image cleanup operations completed");
+      }
+
       console.log("Step 4 completed successfully, returning result");
       return response.success("Step 4 completed successfully", res, responseData);
     } catch (error) {
@@ -735,6 +805,17 @@ module.exports = class ProviderController {
       if (!services || !Array.isArray(services) || services.length === 0) {
         return response.badRequest("Services array is required", res);
       }
+
+      // Get existing service lists for cleanup before deletion
+      const existingServices = await ServiceList.findAll({
+        where: { service_provider_id: serviceProvider.id },
+        attributes: ['service_image']
+      });
+
+      // Store old service image URLs for cleanup
+      const oldServiceImageUrls = existingServices
+        .map(service => service.service_image)
+        .filter(url => url && s3Helper.isCustomUploadedImage(url));
 
       // Delete existing service lists for this provider
       await ServiceList.destroy({
@@ -823,6 +904,28 @@ module.exports = class ProviderController {
       await serviceProvider.update({
         step_completed: 6,
       });
+
+      // Clean up old service images if they were custom uploads
+      if (oldServiceImageUrls.length > 0) {
+        console.log("Cleaning up old service images...");
+        const cleanupPromises = oldServiceImageUrls.map(async (imageUrl) => {
+          console.log("Cleaning up old service image:", imageUrl);
+          try {
+            const result = await s3Helper.deleteImageWithThumbnail(imageUrl);
+            if (result.success) {
+              console.log("Old service image cleanup successful");
+            } else {
+              console.log("Old service image cleanup failed:", result.error);
+            }
+          } catch (error) {
+            console.error("Error during service image cleanup:", error);
+          }
+        });
+
+        // Wait for all cleanup operations to complete (but don't fail if they don't)
+        await Promise.allSettled(cleanupPromises);
+        console.log("Service image cleanup operations completed");
+      }
 
       // Get the created services with category, subcategory, and location details
       const servicesWithDetails = await ServiceList.findAll({
@@ -2273,9 +2376,15 @@ module.exports = class ProviderController {
         updateData.salon_name = serviceProvider.salon_name;
       }
 
-      // Handle banner image
+      // Handle banner image with cleanup
       console.log("Starting banner image handling...");
       let bannerImageUrl = null;
+
+      // Check if provider already has a custom banner image to clean up
+      let oldBannerImageUrl = serviceProvider.banner_image;
+      if (oldBannerImageUrl && s3Helper.isCustomUploadedImage(oldBannerImageUrl)) {
+        console.log("Provider has existing custom banner image, will clean up:", oldBannerImageUrl);
+      }
 
       if (data.banner_image_id) {
         console.log("Using predefined banner image ID:", data.banner_image_id);
@@ -2357,6 +2466,7 @@ module.exports = class ProviderController {
         await serviceProviderAddress.update({
           country_id: data.country_id,
           city_id: data.city_id,
+          address: data.address, // Add mandatory address field
         });
         console.log("ServiceProviderAddress updated successfully");
       } else {
@@ -2365,7 +2475,7 @@ module.exports = class ProviderController {
           user_id: userId,
           country_id: data.country_id,
           city_id: data.city_id,
-          address: null, // Will be filled later
+          address: data.address, // Add mandatory address field
           latitude: null, // Will be filled later
           longitude: null, // Will be filled later
         });
@@ -2378,11 +2488,29 @@ module.exports = class ProviderController {
         salon_name: updateData.salon_name || null,
         city_id: data.city_id,
         country_id: data.country_id,
+        address: data.address, // Include address in response
         description: data.description || null,
         banner_image: bannerImageUrl,
         step_completed: serviceProvider.step_completed,
         message: "Salon details updated successfully"
       };
+
+      // Clean up old banner image if it was a custom upload
+      if (oldBannerImageUrl && s3Helper.isCustomUploadedImage(oldBannerImageUrl)) {
+        console.log("Cleaning up old custom banner image:", oldBannerImageUrl);
+        try {
+          const cleanupResult = await s3Helper.deleteImageWithThumbnail(oldBannerImageUrl);
+          if (cleanupResult.success) {
+            console.log("Old banner image cleanup successful");
+          } else {
+            console.log("Old banner image cleanup failed:", cleanupResult.error);
+            // Don't fail the main operation if cleanup fails
+          }
+        } catch (cleanupError) {
+          console.error("Error during banner image cleanup:", cleanupError);
+          // Don't fail the main operation if cleanup fails
+        }
+      }
 
       console.log("Salon details updated successfully, returning result");
       return response.success(

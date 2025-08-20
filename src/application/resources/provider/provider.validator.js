@@ -798,6 +798,7 @@ module.exports = class ProviderValidator {
       let schema = {
         city_id: joi.number().integer().min(1).required(),
         country_id: joi.number().integer().min(1).required(),
+        address: joi.string().required().min(10).max(500).trim(),
         description: joi.string().optional().allow(null, '').max(1000),
         banner_image_id: joi.number().integer().min(1).optional().allow(null)
       };
