@@ -268,7 +268,7 @@ router.post(
 
 // Route for admin to get specific provider details with validation
 router.get(
-  "/admin/get-provider/:provider_id",
+  "/get-provider/:provider_id",
   [adminAuth, providerValidator.getProvider],
   providerController.getProvider
 );

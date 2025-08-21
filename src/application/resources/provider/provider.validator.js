@@ -686,8 +686,8 @@ module.exports = class ProviderValidator {
         provider_id: joi.number().required().min(1),
       };
 
-      // Validate query parameters against schema
-      let errors = await joiHelper.joiValidation(req.query, schema);
+      // Validate URL parameters against schema
+      let errors = await joiHelper.joiValidation(req.params, schema);
       if (errors) {
         return response.validationError("invalid request", res, errors[0]);
       }
