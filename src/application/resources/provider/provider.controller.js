@@ -304,6 +304,14 @@ module.exports = class ProviderController {
       console.log("ProviderController@authenticate");
       const user = req.user; // User information from middleware (phone, password auth)
 
+      // Check if user account is active
+      if (user.status !== 1) {
+        return response.forbidden("Your account is not active", res, {
+          error_code: 'ACCOUNT_INACTIVE',
+          message: 'Your account has been deactivated. Please contact support for assistance.'
+        });
+      }
+
       // Check if user is verified
       if (!user.is_verified) {
         // Generate OTP and set it in database (hardcoded as 1111 for now)
@@ -2322,6 +2330,104 @@ module.exports = class ProviderController {
     } catch (error) {
       console.error("Error getting provider profile:", error);
       return response.exception("Failed to retrieve provider profile", res);
+    }
+  }
+
+  /**
+   * Admin API to change service provider status (active/inactive)
+   */
+  async changeProviderStatus(req, res) {
+    console.log("ProviderController@changeProviderStatus");
+    const { provider_id, status } = req.body;
+
+    try {
+      // Validate required fields
+      if (!provider_id) {
+        return response.badRequest("Provider ID is required", res, {
+          error_code: 'MISSING_PROVIDER_ID',
+          message: 'Provider ID must be provided'
+        });
+      }
+
+      if (status === undefined || status === null) {
+        return response.badRequest("Status is required", res, {
+          error_code: 'MISSING_STATUS',
+          message: 'Status must be provided (1 for active, 0 for inactive)'
+        });
+      }
+
+      // Validate status value
+      if (![0, 1].includes(status)) {
+        return response.badRequest("Invalid status value. Use 1 for active or 0 for inactive", res, {
+          error_code: 'INVALID_STATUS_VALUE',
+          message: 'Status must be 1 (active) or 0 (inactive)'
+        });
+      }
+
+      // Find the provider by ID
+      const provider = await ServiceProvider.findByPk(provider_id, {
+        include: [
+          {
+            model: User,
+            as: 'user',
+            attributes: ['id', 'first_name', 'last_name', 'full_name', 'email', 'phone_code', 'phone_number', 'status']
+          }
+        ]
+      });
+
+      if (!provider) {
+        return response.notFound("Provider account not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider found with the specified ID'
+        });
+      }
+
+      // Check if user exists
+      if (!provider.user) {
+        return response.notFound("User account not found", res, {
+          error_code: 'USER_NOT_FOUND',
+          message: 'User account associated with this provider not found'
+        });
+      }
+
+      // Update user status (this controls authentication)
+      await provider.user.update({ status: status });
+
+      // Prepare response message
+      const statusText = status === 1 ? 'active' : 'inactive';
+      const responseMessage = `Provider status has been changed to ${statusText} successfully`;
+
+      // Get updated provider data
+      const updatedProvider = await ServiceProvider.findByPk(provider_id, {
+        include: [
+          {
+            model: User,
+            as: 'user',
+            attributes: ['id', 'first_name', 'last_name', 'full_name', 'email', 'phone_code', 'phone_number', 'status']
+          }
+        ]
+      });
+
+      const providerData = {
+        id: updatedProvider.id,
+        user_id: updatedProvider.user_id,
+        first_name: updatedProvider.user.first_name,
+        last_name: updatedProvider.user.last_name,
+        full_name: updatedProvider.user.full_name,
+        email: updatedProvider.user.email,
+        phone_code: updatedProvider.user.phone_code,
+        phone_number: updatedProvider.user.phone_number,
+        provider_type: updatedProvider.provider_type,
+        salon_name: updatedProvider.salon_name,
+        status: updatedProvider.user.status,
+        status_text: statusText,
+        updated_at: updatedProvider.user.updated_at
+      };
+
+      return response.success(responseMessage, res, providerData);
+    } catch (error) {
+      console.error("Error in changeProviderStatus:", error);
+      return response.exception("An error occurred while changing provider status", res);
     }
   }
 

@@ -673,6 +673,65 @@ module.exports = class ProviderValidator {
   }
 
   /**
+   * Validates change provider status request
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware function
+   */
+  async changeProviderStatus(req, res, next) {
+    console.log("ProviderValidator@changeProviderStatus");
+    try {
+      // Check if request body exists
+      if (!req.body || Object.keys(req.body).length === 0) {
+        return response.validationError("Request body is required", res, {
+          error_code: 'MISSING_REQUEST_BODY',
+          message: 'Request body must contain provider_id and status'
+        });
+      }
+
+      // Define validation schema for request body
+      let schema = {
+        provider_id: joi.number().integer().min(1).required().messages({
+          'number.base': 'Provider ID must be a number',
+          'number.integer': 'Provider ID must be an integer',
+          'number.min': 'Provider ID must be greater than 0',
+          'any.required': 'Provider ID is required'
+        }),
+        status: joi.number().valid(0, 1).required().messages({
+          'number.base': 'Status must be a number',
+          'any.only': 'Status must be 0 (inactive) or 1 (active)',
+          'any.required': 'Status is required'
+        })
+      };
+
+      // Validate request body against schema
+      let errors = await joiHelper.joiValidation(req.body, schema);
+      if (errors) {
+        return response.validationError("Validation failed", res, {
+          error_code: 'VALIDATION_ERROR',
+          details: errors[0]
+        });
+      }
+
+      // Additional validation: Check if provider exists
+      const db = require("../../../startup/model");
+      const provider = await db.models.ServiceProvider.findByPk(req.body.provider_id);
+      
+      if (!provider) {
+        return response.notFound("Provider not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider found with the specified ID'
+        });
+      }
+
+      next();
+    } catch (err) {
+      console.error("Validation Error: ", err);
+      return response.exception("Server error occurred", res);
+    }
+  }
+
+  /**
    * Validates get provider request
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object

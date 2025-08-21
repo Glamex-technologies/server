@@ -273,4 +273,11 @@ router.get(
   providerController.getProvider
 );
 
+// Route for admin to change provider status (active/inactive)
+router.post(
+  "/change-status",
+  [adminAuth, providerValidator.changeProviderStatus],
+  providerController.changeProviderStatus
+);
+
 module.exports = router;
