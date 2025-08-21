@@ -1518,7 +1518,7 @@ module.exports = class ProviderController {
 
 
   /**
-   * Get paginated list of all providers with filtering options
+   * Get paginated list of all providers with comprehensive data (similar to getProviderProfile)
    */
   async getAllProviders(req, res) {
     console.log("ProviderController@getAllProviders");
@@ -1528,13 +1528,14 @@ module.exports = class ProviderController {
     const sortOrder = req.query.sortOrder || "DESC";
     const { search, type, status, provider_type } = req.query;
 
-    const query = {
+    // Build query for ServiceProvider table
+    const providerQuery = {
       ...(search && {
         [Op.or]: [
-          { first_name: { [Op.like]: `%${search}%` } },
-          { last_name: { [Op.like]: `%${search}%` } },
-          { email: { [Op.like]: `%${search}%` } },
-          { phone_number: { [Op.like]: `%${search}%` } },
+          { '$user.first_name$': { [Op.like]: `%${search}%` } },
+          { '$user.last_name$': { [Op.like]: `%${search}%` } },
+          { '$user.email$': { [Op.like]: `%${search}%` } },
+          { '$user.phone_number$': { [Op.like]: `%${search}%` } },
         ],
       }),
       ...(type !== undefined &&
@@ -1546,44 +1547,340 @@ module.exports = class ProviderController {
           provider_type: Number(provider_type),
         }),
       ...(status && {
-        status: {
+        '$user.status$': {
           [Op.like]: `%${status}%`,
         },
       }),
-      step_completed: {
-        [Op.gte]: 5,
-      },
     };
 
-    const attributes = [
-      "id",
-      "first_name",
-      "last_name",
-      "full_name",
-      "phone_code",
-      "phone_number",
-      "email",
-      "provider_type",
-      "gender",
-      "status",
-      "admin_verified",
-      "step_completed",
-      "created_at",
-    ];
-
     try {
-      const providers = await providerResources.getAllWithPagination(
-        query,
-        attributes,
-        sortBy,
-        sortOrder,
-        page,
-        limit
+      // Get all users with user_type = 'provider' first
+      const userQuery = {
+        user_type: 'provider',
+        ...(search && {
+          [Op.or]: [
+            { first_name: { [Op.like]: `%${search}%` } },
+            { last_name: { [Op.like]: `%${search}%` } },
+            { email: { [Op.like]: `%${search}%` } },
+            { phone_number: { [Op.like]: `%${search}%` } },
+          ],
+        }),
+        ...(status && {
+          status: {
+            [Op.like]: `%${status}%`,
+          },
+        }),
+      };
+
+      const offset = (page - 1) * limit;
+      
+      // Get users with pagination
+      const usersResult = await User.findAndCountAll({
+        where: userQuery,
+        limit: limit ? parseInt(limit) : 10,
+        offset: offset ? parseInt(offset) : 0,
+        order: [
+          [sortBy, sortOrder]
+        ],
+        attributes: [
+          'id',
+          'first_name',
+          'last_name',
+          'full_name',
+          'email',
+          'phone_code',
+          'phone_number',
+          'gender',
+          'is_verified',
+          'verified_at',
+          'profile_image',
+          'status',
+          'notification',
+          'created_at',
+          'updated_at'
+        ]
+      });
+
+      // Get comprehensive data for each user
+      const formattedProviders = await Promise.all(
+        usersResult.rows.map(async (user) => {
+          // Check if provider profile exists
+          const provider = await ServiceProvider.findOne({
+            where: { user_id: user.id }
+          });
+
+          // If no provider record exists, return user data with profile_required flag
+          if (!provider) {
+            return {
+              id: null,
+              user_id: user.id,
+              profile_required: true,
+              message: "Please complete your provider profile setup",
+              // User details
+              first_name: user.first_name,
+              last_name: user.last_name,
+              full_name: user.full_name,
+              email: user.email,
+              phone_code: user.phone_code,
+              phone_number: user.phone_number,
+              gender: user.gender,
+              is_verified: user.is_verified,
+              verified_at: user.verified_at,
+              profile_image: user.profile_image,
+              status: user.status,
+              notification: user.notification,
+              created_at: user.created_at,
+              updated_at: user.updated_at,
+              // Provider details (null for incomplete profiles)
+              provider_type: null,
+              salon_name: null,
+              banner_image: null,
+              description: null,
+              national_id_image_url: null,
+              freelance_certificate_image_url: null,
+              commercial_registration_image_url: null,
+              overall_rating: null,
+              total_reviews: null,
+              total_bookings: null,
+              total_customers: null,
+              is_approved: null,
+              is_available: null,
+              step_completed: null,
+              fcm_token: null,
+              subscription_id: null,
+              subscription_expiry: null,
+              admin_verified: null,
+              // Related data (empty for incomplete profiles)
+              address: null,
+              bank_details: [],
+              availability: [],
+              services: [],
+              gallery: []
+            };
+          }
+
+          // Get address details
+          let addressDetails = null;
+          try {
+            const address = await ServiceProviderAddress.findOne({
+              where: { user_id: user.id },
+              include: [
+                {
+                  model: db.models.Country,
+                  as: "country",
+                  attributes: ["id", "name"],
+                },
+                {
+                  model: db.models.City,
+                  as: "city",
+                  attributes: ["id", "name"],
+                },
+              ],
+            });
+            
+            if (address) {
+              addressDetails = {
+                id: address.id,
+                address: address.address,
+                latitude: address.latitude,
+                longitude: address.longitude,
+                country_id: address.country_id,
+                city_id: address.city_id,
+                country: address.country ? {
+                  id: address.country.id,
+                  name: address.country.name
+                } : null,
+                city: address.city ? {
+                  id: address.city.id,
+                  name: address.city.name
+                } : null
+              };
+            }
+          } catch (addressError) {
+            console.log("Address not found or error:", addressError.message);
+            addressDetails = null;
+          }
+
+          // Get bank details
+          let bankDetails = [];
+          try {
+            const bankDetailsData = await BankDetails.findAll({
+              where: { service_provider_id: provider.id },
+              attributes: [
+                "id",
+                "bank_name",
+                "account_holder_name",
+                "iban"
+              ],
+            });
+            
+            bankDetails = bankDetailsData.map(bank => ({
+              id: bank.id,
+              bank_name: bank.bank_name,
+              account_holder_name: bank.account_holder_name,
+              iban: bank.iban
+            }));
+          } catch (bankError) {
+            console.log("Bank details not found or error:", bankError.message);
+            bankDetails = [];
+          }
+
+          // Get availability
+          let availability = [];
+          try {
+            const availabilityData = await ServiceProviderAvailability.findAll({
+              where: { service_provider_id: provider.id },
+              attributes: [
+                "id",
+                "day",
+                "from_time",
+                "to_time",
+                "available"
+              ],
+            });
+            
+            availability = availabilityData.map(avail => ({
+              id: avail.id,
+              day: avail.day,
+              from_time: avail.from_time,
+              to_time: avail.to_time,
+              available: avail.available
+            }));
+          } catch (availabilityError) {
+            console.log("Availability not found or error:", availabilityError.message);
+            availability = [];
+          }
+
+          // Get services
+          let services = [];
+          try {
+            const servicesData = await ServiceList.findAll({
+              where: { service_provider_id: provider.id },
+              include: [
+                {
+                  model: db.models.Category,
+                  as: 'category',
+                  attributes: ['id', 'title', 'image']
+                },
+                {
+                  model: db.models.subcategory,
+                  as: 'subcategory',
+                  attributes: ['id', 'title', 'image']
+                },
+                {
+                  model: db.models.ServiceLocation,
+                  as: 'location',
+                  attributes: ['id', 'title', 'description']
+                }
+              ],
+              order: [['created_at', 'DESC']]
+            });
+            
+            services = servicesData.map(service => ({
+              id: service.id,
+              title: service.title,
+              service_id: service.service_id,
+              category_id: service.category_id,
+              sub_category_id: service.sub_category_id,
+              price: service.price,
+              description: service.description,
+              service_image: service.service_image,
+              service_location: service.service_location,
+              is_sub_service: service.is_sub_service,
+              have_offers: service.have_offers,
+              status: service.status,
+              category: service.category,
+              subcategory: service.subcategory,
+              location: service.location
+            }));
+          } catch (servicesError) {
+            console.log("Services not found or error:", servicesError.message);
+            services = [];
+          }
+
+          // Get gallery
+          let gallery = [];
+          try {
+            const galleryData = await db.models.Gallery.findAll({
+              where: { provider_id: provider.id },
+              attributes: ["id", "image", "status", "type"],
+            });
+            
+            gallery = galleryData.map(img => ({
+              id: img.id,
+              image: img.image,
+              status: img.status,
+              type: img.type
+            }));
+          } catch (galleryError) {
+            console.log("Gallery not found or error:", galleryError.message);
+            gallery = [];
+          }
+
+          // Return comprehensive provider data
+          return {
+            id: provider.id,
+            user_id: provider.user_id,
+            profile_required: false,
+            // User details
+            first_name: user.first_name,
+            last_name: user.last_name,
+            full_name: user.full_name,
+            email: user.email,
+            phone_code: user.phone_code,
+            phone_number: user.phone_number,
+            gender: user.gender,
+            is_verified: user.is_verified,
+            verified_at: user.verified_at,
+            profile_image: user.profile_image,
+            status: user.status,
+            notification: user.notification,
+            // Provider details
+            provider_type: provider.provider_type,
+            salon_name: provider.salon_name,
+            banner_image: provider.banner_image,
+            description: provider.description,
+            national_id_image_url: provider.national_id_image_url,
+            freelance_certificate_image_url: provider.freelance_certificate_image_url,
+            commercial_registration_image_url: provider.commercial_registration_image_url,
+            overall_rating: provider.overall_rating,
+            total_reviews: provider.total_reviews,
+            total_bookings: provider.total_bookings,
+            total_customers: provider.total_customers,
+            is_approved: provider.is_approved,
+            is_available: provider.is_available,
+            step_completed: provider.step_completed,
+            fcm_token: provider.fcm_token,
+            subscription_id: provider.subscription_id,
+            subscription_expiry: provider.subscription_expiry,
+            admin_verified: provider.admin_verified,
+            created_at: provider.created_at,
+            updated_at: provider.updated_at,
+            // Related data
+            address: addressDetails,
+            bank_details: bankDetails,
+            availability: availability,
+            services: services,
+            gallery: gallery
+          };
+        })
       );
+
+      const totalPages = Math.ceil(usersResult.count / limit);
+      const responseData = {
+        providers: formattedProviders,
+        pagination: {
+          totalRecords: usersResult.count,
+          perPage: limit,
+          currentPage: page,
+          totalPages
+        }
+      };
+
       return response.success(
         "Providers list retrieved successfully",
         res,
-        providers
+        responseData
       );
     } catch (error) {
       console.error("Error fetching providers:", error);
@@ -1743,20 +2040,16 @@ module.exports = class ProviderController {
           attributes: [
             "id",
             "bank_name",
-            "account_number",
             "account_holder_name",
-            "iban",
-            "swift_code"
+            "iban"
           ],
         });
         
         bankDetails = bankDetailsData.map(bank => ({
           id: bank.id,
           bank_name: bank.bank_name,
-          account_number: bank.account_number,
           account_holder_name: bank.account_holder_name,
-          iban: bank.iban,
-          swift_code: bank.swift_code
+          iban: bank.iban
         }));
       } catch (bankError) {
         console.log("Bank details not found or error:", bankError.message);
@@ -1773,8 +2066,7 @@ module.exports = class ProviderController {
             "day",
             "from_time",
             "to_time",
-            "available",
-            "is_break"
+            "available"
           ],
         });
         
@@ -1783,8 +2075,7 @@ module.exports = class ProviderController {
           day: avail.day,
           from_time: avail.from_time,
           to_time: avail.to_time,
-          available: avail.available,
-          is_break: avail.is_break
+          available: avail.available
         }));
       } catch (availabilityError) {
         console.log("Availability not found or error:", availabilityError.message);
@@ -1798,27 +2089,40 @@ module.exports = class ProviderController {
           where: { service_provider_id: provider.id },
           include: [
             {
-              model: db.models.Service,
-              as: "service",
-              attributes: ["id", "name", "description", "price", "duration"],
+              model: db.models.Category,
+              as: 'category',
+              attributes: ['id', 'title', 'image']
             },
+            {
+              model: db.models.subcategory,
+              as: 'subcategory',
+              attributes: ['id', 'title', 'image']
+            },
+            {
+              model: db.models.ServiceLocation,
+              as: 'location',
+              attributes: ['id', 'title', 'description']
+            }
           ],
+          order: [['created_at', 'DESC']]
         });
         
         services = servicesData.map(service => ({
           id: service.id,
+          title: service.title,
           service_id: service.service_id,
+          category_id: service.category_id,
+          sub_category_id: service.sub_category_id,
           price: service.price,
-          duration: service.duration,
           description: service.description,
           service_image: service.service_image,
-          service: service.service ? {
-            id: service.service.id,
-            name: service.service.name,
-            description: service.service.description,
-            price: service.service.price,
-            duration: service.service.duration
-          } : null
+          service_location: service.service_location,
+          is_sub_service: service.is_sub_service,
+          have_offers: service.have_offers,
+          status: service.status,
+          category: service.category,
+          subcategory: service.subcategory,
+          location: service.location
         }));
       } catch (servicesError) {
         console.log("Services not found or error:", servicesError.message);
@@ -1829,15 +2133,15 @@ module.exports = class ProviderController {
       let gallery = [];
       try {
         const galleryData = await db.models.Gallery.findAll({
-          where: { service_provider_id: provider.id },
-          attributes: ["id", "image_url", "title", "description"],
+          where: { provider_id: provider.id },
+          attributes: ["id", "image", "status", "type"],
         });
         
         gallery = galleryData.map(img => ({
           id: img.id,
-          image_url: img.image_url,
-          title: img.title,
-          description: img.description
+          image: img.image,
+          status: img.status,
+          type: img.type
         }));
       } catch (galleryError) {
         console.log("Gallery not found or error:", galleryError.message);
