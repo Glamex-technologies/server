@@ -1642,6 +1642,31 @@ module.exports = class ProviderController {
     const user = req.user;
 
     try {
+      // If no provider record exists, return user data with profile_required flag
+      if (!provider) {
+        const userProfile = {
+          user: {
+            id: user.id,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            full_name: user.full_name,
+            email: user.email,
+            phone_code: user.phone_code,
+            phone_number: user.phone_number,
+            gender: user.gender,
+            is_verified: user.is_verified,
+            verified_at: user.verified_at,
+            profile_image: user.profile_image,
+            status: user.status,
+            notification: user.notification
+          },
+          profile_required: true,
+          message: "Please complete your provider profile setup"
+        };
+        
+        return response.success("User profile retrieved. Provider profile setup required.", res, userProfile);
+      }
+
       // Get basic provider details first (without includes to avoid association errors)
       const basicProvider = await ServiceProvider.findByPk(provider.id);
       
