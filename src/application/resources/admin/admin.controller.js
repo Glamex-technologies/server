@@ -65,16 +65,20 @@ module.exports = class AdminController {
             const admin = req.admin;
             const adminObj = {
                 id: admin.id,
-                email: admin.email,
                 first_name: admin.first_name,
                 last_name: admin.last_name,
+                email: admin.email,
                 full_name: admin.full_name,
-                name: admin.name,
+                phone_code: admin.phone_code,
+                phone_number: admin.phone_number,
                 role: {
                     id: admin.roleData.id,
                     title: admin.roleData.title,
                 },
                 status: admin.status,
+                profile_image: admin.profile_image,
+                created_at: admin.created_at,
+                updated_at: admin.updated_at,
             };
             return response.success("Admin profile fetched successfully", res, adminObj);
         } catch (error) {
