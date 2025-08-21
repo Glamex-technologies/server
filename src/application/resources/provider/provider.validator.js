@@ -759,7 +759,7 @@ module.exports = class ProviderValidator {
   }
 
   /**
-   * Validates provider update request
+   * Validates provider profile update request
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    * @param {Function} next - Express next middleware function
@@ -767,21 +767,83 @@ module.exports = class ProviderValidator {
   async updateProvider(req, res, next) {
     console.log("ProviderValidator@updateProvider");
     try {
-      // Define validation schema for updating provider
+      // Define comprehensive validation schema for updating provider profile
       let schema = {
-        provider_id: joi.number().required().min(1),
-        first_name: joi.string().optional(),
-        last_name: joi.string().optional(),
+        // User fields
+        first_name: joi.string().min(2).max(50).optional(),
+        last_name: joi.string().min(2).max(50).optional(),
+        full_name: joi.string().min(2).max(100).optional(),
         email: joi.string().email().optional(),
+        gender: joi.number().valid(1, 2).optional(), // 1 = male, 2 = female
+        profile_image: joi.string().uri().optional(),
+        notification: joi.number().valid(0, 1).optional(),
+        fcm_token: joi.string().optional(),
+        
+        // Provider fields
+        provider_type: joi.string().valid('individual', 'salon').optional(),
+        salon_name: joi.string().min(2).max(100).optional(),
+        banner_image: joi.string().uri().optional(),
+        description: joi.string().max(1000).optional(),
+        national_id_image_url: joi.string().uri().optional(),
+        freelance_certificate_image_url: joi.string().uri().optional(),
+        commercial_registration_image_url: joi.string().uri().optional(),
+        is_available: joi.number().valid(0, 1).optional(),
+        subscription_id: joi.number().min(0).optional(),
+        subscription_expiry: joi.date().optional(),
+        
+        // Address fields
+        address: joi.string().max(500).optional(),
+        latitude: joi.number().min(-90).max(90).optional(),
+        longitude: joi.number().min(-180).max(180).optional(),
         country_id: joi.number().min(1).optional(),
         city_id: joi.number().min(1).optional(),
-        status: joi.number().valid(1, 2, 3).optional(),
+        
+        // Bank fields
+        account_holder_name: joi.string().min(2).max(100).optional(),
+        bank_name: joi.string().min(2).max(100).optional(),
+        iban: joi.string().min(10).max(50).optional(),
+        
+        // Availability fields
+        availability: joi.array().items(
+          joi.object({
+            day: joi.string().valid('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday').required(),
+            from_time: joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
+            to_time: joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
+            available: joi.number().valid(0, 1).optional()
+          })
+        ).optional(),
+        
+        // Service list fields
+        service_list: joi.array().items(
+          joi.object({
+            id: joi.number().min(1).required(),
+            title: joi.string().min(1).max(200).optional(),
+            price: joi.number().min(0).precision(2).optional(),
+            description: joi.string().max(1000).optional(),
+            service_image: joi.string().uri().optional(),
+            status: joi.number().valid(0, 1).optional(),
+            have_offers: joi.number().valid(0, 1).optional(),
+            service_location: joi.number().valid(1, 2, 3).optional()
+          })
+        ).optional(),
       };
 
       // Validate request body against schema
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
-        return response.validationError("invalid request", res, errors[0]);
+        return response.validationError("Invalid update data", res, {
+          error_code: 'VALIDATION_ERROR',
+          message: errors[0],
+          field: errors[0].path ? errors[0].path[0] : 'unknown'
+        });
+      }
+
+      // Validate that at least one field is provided
+      if (!req.body || Object.keys(req.body).length === 0) {
+        return response.badRequest("No update data provided", res, {
+          error_code: 'MISSING_UPDATE_DATA',
+          message: 'Please provide at least one field to update'
+        });
       }
 
       next();
@@ -1029,4 +1091,6 @@ module.exports = class ProviderValidator {
       return response.exception("Server error occurred", res);
     }
   }
+
+
 }

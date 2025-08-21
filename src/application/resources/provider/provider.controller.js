@@ -2675,41 +2675,458 @@ module.exports = class ProviderController {
    */
   async updateProvider(req, res) {
     console.log("ProviderController@updateProvider");
-    const data = req.body;
-    const serviceProvider = await providerResources.findOne({
-      id: data.provider_id,
-    });
+    const updateData = req.body;
+    const user = req.user;
+    const provider = req.provider;
 
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
-    }
-
-    // Remove provider_id to prevent updating it
-    const { provider_id, ...updateData } = data;
-
-    // Only include valid keys for update
-    const allowedFields = [
-      "first_name",
-      "last_name",
-      "email",
-      "country_id",
-      "city_id",
-      "status",
-    ];
-    const finalUpdateData = {};
-
-    for (const key of allowedFields) {
-      if (updateData.hasOwnProperty(key)) {
-        finalUpdateData[key] = updateData[key];
+    try {
+      // Validate that update data is provided
+      if (!updateData || Object.keys(updateData).length === 0) {
+        return response.badRequest("Update data is required", res, {
+          error_code: 'MISSING_UPDATE_DATA',
+          message: 'Please provide the fields you want to update'
+        });
       }
+
+      // Separate fields for each model
+      const userFields = {};
+      const providerFields = {};
+      const addressFields = {};
+      const bankFields = {};
+      const availabilityFields = {};
+      const serviceListFields = {};
+
+      // Define allowed fields for each model
+      const allowedUserFields = [
+        'first_name', 'last_name', 'full_name', 'email', 'gender', 
+        'profile_image', 'notification', 'fcm_token'
+      ];
+
+      const allowedProviderFields = [
+        'provider_type', 'salon_name', 'banner_image', 'description',
+        'national_id_image_url', 'freelance_certificate_image_url', 
+        'commercial_registration_image_url', 'is_available', 'notification',
+        'fcm_token', 'subscription_id', 'subscription_expiry'
+      ];
+
+      const allowedAddressFields = [
+        'address', 'latitude', 'longitude', 'country_id', 'city_id'
+      ];
+
+      const allowedBankFields = [
+        'account_holder_name', 'bank_name', 'iban'
+      ];
+
+      const allowedAvailabilityFields = [
+        'availability'
+      ];
+
+      const allowedServiceListFields = [
+        'service_list'
+      ];
+
+      // Categorize fields
+      Object.keys(updateData).forEach(key => {
+        if (allowedUserFields.includes(key)) {
+          userFields[key] = updateData[key];
+        } else if (allowedProviderFields.includes(key)) {
+          providerFields[key] = updateData[key];
+        } else if (allowedAddressFields.includes(key)) {
+          addressFields[key] = updateData[key];
+        } else if (allowedBankFields.includes(key)) {
+          bankFields[key] = updateData[key];
+        } else if (allowedAvailabilityFields.includes(key)) {
+          availabilityFields[key] = updateData[key];
+        } else if (allowedServiceListFields.includes(key)) {
+          serviceListFields[key] = updateData[key];
+        }
+      });
+
+      // Validate that at least one valid field is provided
+      if (Object.keys(userFields).length === 0 && 
+          Object.keys(providerFields).length === 0 && 
+          Object.keys(addressFields).length === 0 && 
+          Object.keys(bankFields).length === 0 &&
+          Object.keys(availabilityFields).length === 0 &&
+          Object.keys(serviceListFields).length === 0) {
+        return response.badRequest("No valid fields provided for update", res, {
+          error_code: 'INVALID_FIELDS',
+          message: 'Please provide valid fields to update',
+          allowed_fields: {
+            user: allowedUserFields,
+            provider: allowedProviderFields,
+            address: allowedAddressFields,
+            bank: allowedBankFields,
+            availability: allowedAvailabilityFields,
+            service_list: allowedServiceListFields
+          }
+        });
+      }
+
+      // Handle full_name update if first_name or last_name is updated
+      if (userFields.first_name || userFields.last_name) {
+        const currentUser = await User.findByPk(user.id);
+        const firstName = userFields.first_name || currentUser.first_name;
+        const lastName = userFields.last_name || currentUser.last_name;
+        userFields.full_name = `${firstName} ${lastName}`;
+      }
+
+      // Update User model if user fields are provided
+      if (Object.keys(userFields).length > 0) {
+        await user.update(userFields);
+        console.log("User fields updated:", Object.keys(userFields));
+      }
+
+      // Update ServiceProvider model if provider fields are provided
+      if (Object.keys(providerFields).length > 0 && provider) {
+        await provider.update(providerFields);
+        console.log("Provider fields updated:", Object.keys(providerFields));
+      }
+
+      // Update address if address fields are provided
+      if (Object.keys(addressFields).length > 0) {
+        let address = await ServiceProviderAddress.findOne({
+          where: { user_id: user.id }
+        });
+
+        if (address) {
+          await address.update(addressFields);
+        } else {
+          // Create new address record
+          await ServiceProviderAddress.create({
+            user_id: user.id,
+            ...addressFields
+          });
+        }
+        console.log("Address fields updated:", Object.keys(addressFields));
+      }
+
+      // Update bank details if bank fields are provided
+      if (Object.keys(bankFields).length > 0 && provider) {
+        let bankDetails = await BankDetails.findOne({
+          where: { service_provider_id: provider.id }
+        });
+
+        if (bankDetails) {
+          await bankDetails.update(bankFields);
+        } else {
+          // Create new bank details record
+          await BankDetails.create({
+            service_provider_id: provider.id,
+            ...bankFields
+          });
+        }
+        console.log("Bank fields updated:", Object.keys(bankFields));
+      }
+
+      // Update availability if availability fields are provided
+      if (Object.keys(availabilityFields).length > 0 && provider) {
+        const availabilityData = availabilityFields.availability;
+        
+        if (Array.isArray(availabilityData) && availabilityData.length > 0) {
+          // Validate availability data
+          const daysOfWeek = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+          const errors = [];
+          
+          availabilityData.forEach((item, index) => {
+            if (!item.day) {
+              errors.push(`Day is required for availability record ${index + 1}`);
+            } else if (!daysOfWeek.includes(item.day.toLowerCase())) {
+              errors.push(`Invalid day '${item.day}' for availability record ${index + 1}`);
+            }
+            
+            if (!item.from_time) {
+              errors.push(`From time is required for ${item.day}`);
+            }
+            
+            if (!item.to_time) {
+              errors.push(`To time is required for ${item.day}`);
+            }
+            
+            // Validate time format (HH:MM)
+            const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+            if (item.from_time && !timeRegex.test(item.from_time)) {
+              errors.push(`Invalid from_time format for ${item.day}. Use HH:MM format`);
+            }
+            if (item.to_time && !timeRegex.test(item.to_time)) {
+              errors.push(`Invalid to_time format for ${item.day}. Use HH:MM format`);
+            }
+            
+            // Validate time range
+            if (item.from_time && item.to_time) {
+              const fromTime = new Date(`2000-01-01T${item.from_time}:00`);
+              const toTime = new Date(`2000-01-01T${item.to_time}:00`);
+              if (fromTime >= toTime) {
+                errors.push(`From time must be before to time for ${item.day}`);
+              }
+            }
+          });
+
+          if (errors.length > 0) {
+            return response.badRequest(errors.join(", "), res, {
+              error_code: 'AVAILABILITY_VALIDATION_ERROR',
+              message: 'Invalid availability data provided'
+            });
+          }
+
+          // Delete existing availability records for this provider
+          await ServiceProviderAvailability.destroy({
+            where: { service_provider_id: provider.id }
+          });
+
+          // Create new availability records
+          const availabilityRecords = availabilityData.map(item => ({
+            service_provider_id: provider.id,
+            day: item.day.toLowerCase(),
+            from_time: item.from_time,
+            to_time: item.to_time,
+            available: item.available !== undefined ? item.available : 1
+          }));
+
+          await ServiceProviderAvailability.bulkCreate(availabilityRecords);
+          console.log("Availability updated:", availabilityData.length, "records");
+        }
+      }
+
+      // Update service list if service list fields are provided
+      if (Object.keys(serviceListFields).length > 0 && provider) {
+        const serviceListData = serviceListFields.service_list;
+        
+        if (Array.isArray(serviceListData) && serviceListData.length > 0) {
+          // Validate service list data
+          const errors = [];
+          
+          serviceListData.forEach((item, index) => {
+            if (!item.id) {
+              errors.push(`Service ID is required for service list record ${index + 1}`);
+            }
+            
+            if (item.title && typeof item.title !== 'string') {
+              errors.push(`Title must be a string for service list record ${index + 1}`);
+            }
+            
+            if (item.price !== undefined && (isNaN(item.price) || item.price < 0)) {
+              errors.push(`Price must be a positive number for service list record ${index + 1}`);
+            }
+            
+            if (item.description && typeof item.description !== 'string') {
+              errors.push(`Description must be a string for service list record ${index + 1}`);
+            }
+            
+            if (item.service_image && typeof item.service_image !== 'string') {
+              errors.push(`Service image must be a string for service list record ${index + 1}`);
+            }
+          });
+
+          if (errors.length > 0) {
+            return response.badRequest(errors.join(", "), res, {
+              error_code: 'SERVICE_LIST_VALIDATION_ERROR',
+              message: 'Invalid service list data provided'
+            });
+          }
+
+          // Update each service list item
+          for (const item of serviceListData) {
+            const updateData = {};
+            
+            if (item.title !== undefined) updateData.title = item.title;
+            if (item.price !== undefined) updateData.price = item.price;
+            if (item.description !== undefined) updateData.description = item.description;
+            if (item.service_image !== undefined) updateData.service_image = item.service_image;
+            if (item.status !== undefined) updateData.status = item.status;
+            if (item.have_offers !== undefined) updateData.have_offers = item.have_offers;
+            if (item.service_location !== undefined) updateData.service_location = item.service_location;
+            
+            if (Object.keys(updateData).length > 0) {
+              await ServiceList.update(updateData, {
+                where: { 
+                  id: item.id,
+                  service_provider_id: provider.id,
+                  deleted_at: null
+                }
+              });
+            }
+          }
+          console.log("Service list updated:", serviceListData.length, "records");
+        }
+      }
+
+      // Get updated data for response
+      const updatedUser = await User.findByPk(user.id);
+      const updatedProvider = provider ? await ServiceProvider.findByPk(provider.id) : null;
+      const updatedAddress = await ServiceProviderAddress.findOne({
+        where: { user_id: user.id },
+        include: [
+          {
+            model: db.models.Country,
+            as: "country",
+            attributes: ["id", "name"],
+          },
+          {
+            model: db.models.City,
+            as: "city",
+            attributes: ["id", "name"],
+          },
+        ],
+      });
+      const updatedBankDetails = provider ? await BankDetails.findOne({
+        where: { service_provider_id: provider.id }
+      }) : null;
+
+      // Get updated availability
+      let updatedAvailability = [];
+      if (provider) {
+        try {
+          const availabilityData = await ServiceProviderAvailability.findAll({
+            where: { service_provider_id: provider.id },
+            attributes: [
+              "id",
+              "day",
+              "from_time",
+              "to_time",
+              "available"
+            ],
+          });
+          
+          updatedAvailability = availabilityData.map(avail => ({
+            id: avail.id,
+            day: avail.day,
+            from_time: avail.from_time,
+            to_time: avail.to_time,
+            available: avail.available
+          }));
+        } catch (availabilityError) {
+          console.log("Availability not found or error:", availabilityError.message);
+          updatedAvailability = [];
+        }
+      }
+
+      // Get updated services
+      let updatedServices = [];
+      if (provider) {
+        try {
+          const servicesData = await ServiceList.findAll({
+            where: { 
+              service_provider_id: provider.id,
+              deleted_at: null
+            },
+            attributes: [
+              "id",
+              "title",
+              "service_id",
+              "category_id",
+              "sub_category_id",
+              "price",
+              "description",
+              "service_image",
+              "status",
+              "have_offers",
+              "service_location"
+            ],
+          });
+          
+          updatedServices = servicesData.map(service => ({
+            id: service.id,
+            title: service.title,
+            service_id: service.service_id,
+            category_id: service.category_id,
+            sub_category_id: service.sub_category_id,
+            price: service.price,
+            description: service.description,
+            service_image: service.service_image,
+            status: service.status,
+            have_offers: service.have_offers,
+            service_location: service.service_location
+          }));
+        } catch (servicesError) {
+          console.log("Services not found or error:", servicesError.message);
+          updatedServices = [];
+        }
+      }
+
+      // Prepare response data
+      const responseData = {
+        user: {
+          id: updatedUser.id,
+          first_name: updatedUser.first_name,
+          last_name: updatedUser.last_name,
+          full_name: updatedUser.full_name,
+          email: updatedUser.email,
+          phone_code: updatedUser.phone_code,
+          phone_number: updatedUser.phone_number,
+          gender: updatedUser.gender,
+          is_verified: updatedUser.is_verified,
+          verified_at: updatedUser.verified_at,
+          profile_image: updatedUser.profile_image,
+          status: updatedUser.status,
+          notification: updatedUser.notification,
+          fcm_token: updatedUser.fcm_token
+        },
+        provider: updatedProvider ? {
+          id: updatedProvider.id,
+          provider_type: updatedProvider.provider_type,
+          salon_name: updatedProvider.salon_name,
+          banner_image: updatedProvider.banner_image,
+          description: updatedProvider.description,
+          national_id_image_url: updatedProvider.national_id_image_url,
+          freelance_certificate_image_url: updatedProvider.freelance_certificate_image_url,
+          commercial_registration_image_url: updatedProvider.commercial_registration_image_url,
+          overall_rating: updatedProvider.overall_rating,
+          total_reviews: updatedProvider.total_reviews,
+          total_bookings: updatedProvider.total_bookings,
+          total_customers: updatedProvider.total_customers,
+          is_approved: updatedProvider.is_approved,
+          rejection_reason: updatedProvider.rejection_reason,
+          is_available: updatedProvider.is_available,
+          step_completed: updatedProvider.step_completed,
+          notification: updatedProvider.notification,
+          fcm_token: updatedProvider.fcm_token,
+          subscription_id: updatedProvider.subscription_id,
+          subscription_expiry: updatedProvider.subscription_expiry
+        } : null,
+        address: updatedAddress ? {
+          id: updatedAddress.id,
+          address: updatedAddress.address,
+          latitude: updatedAddress.latitude,
+          longitude: updatedAddress.longitude,
+          country_id: updatedAddress.country_id,
+          city_id: updatedAddress.city_id,
+          country: updatedAddress.country ? {
+            id: updatedAddress.country.id,
+            name: updatedAddress.country.name
+          } : null,
+          city: updatedAddress.city ? {
+            id: updatedAddress.city.id,
+            name: updatedAddress.city.name
+          } : null
+        } : null,
+        bank_details: updatedBankDetails ? {
+          id: updatedBankDetails.id,
+          account_holder_name: updatedBankDetails.account_holder_name,
+          bank_name: updatedBankDetails.bank_name,
+          iban: updatedBankDetails.iban
+        } : null,
+        availability: updatedAvailability,
+        services: updatedServices,
+        updated_fields: {
+          user: Object.keys(userFields),
+          provider: Object.keys(providerFields),
+          address: Object.keys(addressFields),
+          bank: Object.keys(bankFields),
+          availability: Object.keys(availabilityFields),
+          service_list: Object.keys(serviceListFields)
+        }
+      };
+
+      return response.success("Provider profile updated successfully", res, responseData);
+
+    } catch (error) {
+      console.error("Error updating provider profile:", error);
+      return response.exception("Failed to update provider profile", res);
     }
-
-    await providerResources.updateProvider(finalUpdateData, {
-      id: data.provider_id,
-    });
-
-    return response.success("Provider information updated successfully", res);
   }
+
+
 
   /**
    * Handle file uploads for provider documents
@@ -3011,42 +3428,163 @@ module.exports = class ProviderController {
   /**
    * Delete provider account after password verification
    */
+  /**
+   * Delete provider account with comprehensive soft deletion
+   * Implements industry-level account deletion with proper cleanup
+   */
   async deleteMyAccount(req, res) {
-    try {
-      const { password } = req.body;
-      const provider = req.provider;
-      const user = req.user;
-      
-      const isMatch = await bcrypt.compare(password, user.password);
+    console.log("ProviderController@deleteMyAccount");
+    const { password, reason_id } = req.body;
+    const user = req.user;
+    const provider = req.provider;
 
-      if (!isMatch) {
-        return response.badRequest(
-          "The password you entered is incorrect",
-          res
-        );
+    try {
+      // Validate password
+      if (!password) {
+        return response.badRequest("Password is required for account deletion", res, {
+          error_code: 'PASSWORD_REQUIRED',
+          message: 'Please provide your password to confirm account deletion'
+        });
       }
 
-      // Soft delete both provider and user
-      await providerResources.updateProvider(
-        { status: 0 },
-        { id: provider.id }
-      );
-      
-      await userResources.updateUser(
-        { status: 0 },
-        { id: user.id }
-      );
+      // Verify password
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return response.unauthorized("Incorrect password", res, {
+          error_code: 'INVALID_PASSWORD',
+          message: 'The password you entered is incorrect'
+        });
+      }
 
-      return response.success(
-        "Your account has been deleted successfully",
-        res
-      );
+      // Start transaction for atomic operations
+      const transaction = await db.sequelize.transaction();
+
+      try {
+        // Soft delete related data first (if provider exists)
+        if (provider) {
+          // Soft delete service lists
+          await ServiceList.update(
+            { status: 0, deleted_at: new Date() },
+            { 
+              where: { service_provider_id: provider.id },
+              transaction 
+            }
+          );
+
+          // Soft delete availability records
+          await ServiceProviderAvailability.update(
+            { available: 0, deleted_at: new Date() },
+            { 
+              where: { service_provider_id: provider.id },
+              transaction 
+            }
+          );
+
+          // Soft delete bank details
+          await BankDetails.update(
+            { deleted_at: new Date() },
+            { 
+              where: { service_provider_id: provider.id },
+              transaction 
+            }
+          );
+
+          // Soft delete gallery images
+          await db.models.Gallery.update(
+            { status: 0, deleted_at: new Date() },
+            { 
+              where: { provider_id: provider.id },
+              transaction 
+            }
+          );
+
+          // Soft delete service provider address
+          await ServiceProviderAddress.update(
+            { deleted_at: new Date() },
+            { 
+              where: { user_id: user.id },
+              transaction 
+            }
+          );
+
+          // Soft delete the service provider
+          await ServiceProvider.update(
+            { 
+              status: 0, 
+              is_available: 0,
+              deleted_at: new Date() 
+            },
+            { 
+              where: { id: provider.id },
+              transaction 
+            }
+          );
+
+          console.log(`Service provider ${provider.id} soft deleted successfully`);
+        }
+
+        // Soft delete user account
+        await User.update(
+          { 
+            status: 0, 
+            notification: 0,
+            deleted_at: new Date() 
+          },
+          { 
+            where: { id: user.id },
+            transaction 
+          }
+        );
+
+        // Invalidate all tokens for this user (if token model exists)
+        try {
+          if (db.models.Token) {
+            await db.models.Token.update(
+              { 
+                is_active: 0, 
+                deleted_at: new Date() 
+              },
+              { 
+                where: { user_id: user.id },
+                transaction 
+            }
+            );
+          }
+        } catch (tokenError) {
+          console.log("Token invalidation skipped (Token model may not exist):", tokenError.message);
+        }
+
+        // Commit transaction
+        await transaction.commit();
+
+        // Log deletion for audit purposes
+        console.log(`Provider account deletion completed:`, {
+          user_id: user.id,
+          provider_id: provider?.id,
+          email: user.email,
+          phone: user.phone_number,
+          reason_id: reason_id,
+          deleted_at: new Date().toISOString()
+        });
+
+        return response.success("Your account has been deleted successfully", res, {
+          message: "Account deletion completed",
+          user_id: user.id,
+          provider_id: provider?.id,
+          deletion_timestamp: new Date().toISOString(),
+          note: "Your account has been soft deleted successfully."
+        });
+
+      } catch (transactionError) {
+        // Rollback transaction on error
+        await transaction.rollback();
+        console.error("Transaction error during account deletion:", transactionError);
+        throw transactionError;
+      }
+
     } catch (error) {
-      console.log(error);
-      return response.exception(
-        "An error occurred while deleting account",
-        res
-      );
+      console.error("Error deleting provider account:", error);
+      return response.exception("An error occurred while deleting your account", res);
     }
   }
 

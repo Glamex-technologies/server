@@ -215,7 +215,7 @@ router.get(
 router.get("/profile", [providerAuth], providerController.getProviderProfile);
 
 // Update provider profile
-router.put("/profile", [providerAuth], providerController.updateProvider);
+router.put("/profile", [providerAuth, providerValidator.updateProvider], providerController.updateProvider);
 
 // Toggle availability status
 router.post(
@@ -248,9 +248,11 @@ router.post(
 // Route for provider to delete their own account
 router.delete(
   "/delete-my-account",
-  [providerAuth],
+  [providerAuth, providerValidator.deleteMyAccount],
   providerController.deleteMyAccount
 );
+
+
 
 // ========================================
 // ADMIN MANAGEMENT ROUTES
