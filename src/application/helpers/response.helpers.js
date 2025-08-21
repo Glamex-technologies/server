@@ -6,7 +6,7 @@ module.exports = class ResponseHelper {
     };
 
     created(msg, res, data) {
-        return this.sendResponse(200, msg, res, data);
+        return this.sendResponse(201, msg, res, data);
     };
 
     disallowed(msg, res, data) {
@@ -14,7 +14,7 @@ module.exports = class ResponseHelper {
     };
 
     noContent(msg, res, data) {
-        return this.sendResponse(200, msg, res, data);
+        return this.sendResponse(204, msg, res, data);
     };
 
     redirect(url, res) {
@@ -37,7 +37,7 @@ module.exports = class ResponseHelper {
     };
 
     forbidden(msg, res, data) {
-        return this.sendResponse(401, msg, res, data);
+        return this.sendResponse(403, msg, res, data);
     };
 
     notFound(msg, res, data) {
@@ -49,7 +49,7 @@ module.exports = class ResponseHelper {
     };
 
     conflict(msg, res, data) {
-        return this.sendResponse(400, msg, res, data);
+        return this.sendResponse(409, msg, res, data);
     };
 
     custom(code, msg, res, data) {
@@ -70,19 +70,44 @@ module.exports = class ResponseHelper {
         res.setHeader('Access-Control-Allow-Credentials', 'true');
         res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,PATCH,POST,DELETE,OPTIONS');
         
-        if (!data) {
-            return res.status(code).send({
-                statusCode: code,
-                api_ver: process.env.API_VER,
-                message: msg,
-            });
-        } else {
-            return res.status(code).send({
-                statusCode: code,
-                api_ver: process.env.API_VER,
-                message: msg,
-                data: data,
-            });
+        // Determine success status based on status code
+        const success = code >= 200 && code < 300;
+        
+        // Map status codes to error codes
+        const errorCode = this.getErrorCode(code);
+        
+        const responseBody = {
+            statusCode: code,
+            api_ver: process.env.API_VER,
+            message: msg,
+            success: success,
+            error_code: errorCode
+        };
+        
+        if (data) {
+            responseBody.data = data;
         }
+        
+        return res.status(code).send(responseBody);
+    }
+
+    getErrorCode(statusCode) {
+        // Return null for success responses (2xx)
+        if (statusCode >= 200 && statusCode < 300) {
+            return null;
+        }
+        
+        // Map status codes to error codes
+        const errorCodeMap = {
+            400: 'BAD_REQUEST',
+            401: 'UNAUTHORIZED',
+            403: 'FORBIDDEN',
+            404: 'NOT_FOUND',
+            409: 'CONFLICT',
+            422: 'VALIDATION_ERROR',
+            500: 'INTERNAL_SERVER_ERROR'
+        };
+        
+        return errorCodeMap[statusCode] || 'UNKNOWN_ERROR';
     }
 }
