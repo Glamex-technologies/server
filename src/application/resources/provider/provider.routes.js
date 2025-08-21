@@ -215,7 +215,7 @@ router.get(
 router.get("/profile", [providerAuth], providerController.getProviderProfile);
 
 // Update provider profile
-router.put("/profile", [providerAuth], providerController.updateProvider);
+router.put("/profile", [providerAuth, providerValidator.updateProvider], providerController.updateProvider);
 
 // Toggle availability status
 router.post(
@@ -248,29 +248,38 @@ router.post(
 // Route for provider to delete their own account
 router.delete(
   "/delete-my-account",
-  [providerAuth],
+  [providerAuth, providerValidator.deleteMyAccount],
   providerController.deleteMyAccount
 );
+
+
 
 // ========================================
 // ADMIN MANAGEMENT ROUTES
 // ========================================
 
 // Route to get all providers with admin auth and validation
-router.get("/get-all", [adminAuth], providerController.getAllProviders);
+router.get("/get-all", [adminAuth, providerValidator.getAllProviders], providerController.getAllProviders);
 
 // Route for admin to perform actions on provider profiles with validation
 router.post(
   "/provider-profile-action/:provider_id",
-  [adminAuth],
+  [adminAuth, providerValidator.providerProfileAction],
   providerController.providerProfileAction
 );
 
 // Route for admin to get specific provider details with validation
 router.get(
-  "/admin/get-provider/:provider_id",
-  [adminAuth],
+  "/get-provider/:provider_id",
+  [adminAuth, providerValidator.getProvider],
   providerController.getProvider
+);
+
+// Route for admin to change provider status (active/inactive)
+router.post(
+  "/change-status",
+  [adminAuth, providerValidator.changeProviderStatus],
+  providerController.changeProviderStatus
 );
 
 module.exports = router;

@@ -599,22 +599,129 @@ module.exports = class ProviderValidator {
    */
   async providerProfileAction(req, res, next) {
     console.log("ProviderValidator@providerProfileAction");
+    console.log("Request body in validator:", req.body);
+    console.log("Request params in validator:", req.params);
     try {
-      // Define validation schema for profile action
-      let schema = {
-        provider_id: joi.number().optional(),
-        approve: joi.number().valid(1, 2).default(1).required(),
+      // Validate provider_id from URL parameters
+      const providerIdSchema = joi.number().integer().min(1).required().messages({
+        'number.base': 'Provider ID must be a number',
+        'number.integer': 'Provider ID must be an integer',
+        'number.min': 'Provider ID must be greater than 0',
+        'any.required': 'Provider ID is required'
+      });
+
+      const providerIdErrors = await joiHelper.joiValidation({ provider_id: req.params.provider_id }, { provider_id: providerIdSchema });
+      if (providerIdErrors) {
+        return response.validationError("Invalid provider ID", res, {
+          error_code: 'INVALID_PROVIDER_ID',
+          details: providerIdErrors[0]
+        });
+      }
+
+      // Check if request body exists
+      if (!req.body || Object.keys(req.body).length === 0) {
+        return response.validationError("Request body is required", res, {
+          error_code: 'MISSING_REQUEST_BODY',
+          message: 'Request body must contain approval action'
+        });
+      }
+
+      // Define validation schema for request body (without provider_id)
+      let bodySchema = {
+        approve: joi.number().valid(1, 2).required().messages({
+          'number.base': 'Approval action must be a number',
+          'any.only': 'Approval action must be 1 (approve) or 2 (reject)',
+          'any.required': 'Approval action is required'
+        }),
         reason: joi.string().when("approve", {
           is: 2,
-          then: joi.string().required(),
-          otherwise: joi.string().optional(),
+          then: joi.string().min(10).max(1000).required().messages({
+            'string.empty': 'Rejection reason is required when rejecting a profile',
+            'string.min': 'Rejection reason must be at least 10 characters long',
+            'string.max': 'Rejection reason cannot exceed 1000 characters',
+            'any.required': 'Rejection reason is required when rejecting a profile'
+          }),
+          otherwise: joi.string().optional().allow(null, '')
         }),
+      };
+
+      // Validate request body against schema
+      let bodyErrors = await joiHelper.joiValidation(req.body, bodySchema);
+      if (bodyErrors) {
+        return response.validationError("Validation failed", res, {
+          error_code: 'VALIDATION_ERROR',
+          details: bodyErrors[0]
+        });
+      }
+
+      // Additional validation: Check if provider exists
+      const db = require("../../../startup/model");
+      const provider = await db.models.ServiceProvider.findByPk(req.params.provider_id);
+      
+      if (!provider) {
+        return response.notFound("Provider not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider found with the specified ID'
+        });
+      }
+
+      next();
+    } catch (err) {
+      console.error("Validation Error: ", err);
+      return response.exception("Server error occurred", res);
+    }
+  }
+
+  /**
+   * Validates change provider status request
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware function
+   */
+  async changeProviderStatus(req, res, next) {
+    console.log("ProviderValidator@changeProviderStatus");
+    try {
+      // Check if request body exists
+      if (!req.body || Object.keys(req.body).length === 0) {
+        return response.validationError("Request body is required", res, {
+          error_code: 'MISSING_REQUEST_BODY',
+          message: 'Request body must contain provider_id and status'
+        });
+      }
+
+      // Define validation schema for request body
+      let schema = {
+        provider_id: joi.number().integer().min(1).required().messages({
+          'number.base': 'Provider ID must be a number',
+          'number.integer': 'Provider ID must be an integer',
+          'number.min': 'Provider ID must be greater than 0',
+          'any.required': 'Provider ID is required'
+        }),
+        status: joi.number().valid(0, 1).required().messages({
+          'number.base': 'Status must be a number',
+          'any.only': 'Status must be 0 (inactive) or 1 (active)',
+          'any.required': 'Status is required'
+        })
       };
 
       // Validate request body against schema
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
-        return response.validationError("invalid request", res, errors[0]);
+        return response.validationError("Validation failed", res, {
+          error_code: 'VALIDATION_ERROR',
+          details: errors[0]
+        });
+      }
+
+      // Additional validation: Check if provider exists
+      const db = require("../../../startup/model");
+      const provider = await db.models.ServiceProvider.findByPk(req.body.provider_id);
+      
+      if (!provider) {
+        return response.notFound("Provider not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider found with the specified ID'
+        });
       }
 
       next();
@@ -638,8 +745,8 @@ module.exports = class ProviderValidator {
         provider_id: joi.number().required().min(1),
       };
 
-      // Validate query parameters against schema
-      let errors = await joiHelper.joiValidation(req.query, schema);
+      // Validate URL parameters against schema
+      let errors = await joiHelper.joiValidation(req.params, schema);
       if (errors) {
         return response.validationError("invalid request", res, errors[0]);
       }
@@ -652,7 +759,7 @@ module.exports = class ProviderValidator {
   }
 
   /**
-   * Validates provider update request
+   * Validates provider profile update request
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    * @param {Function} next - Express next middleware function
@@ -660,21 +767,83 @@ module.exports = class ProviderValidator {
   async updateProvider(req, res, next) {
     console.log("ProviderValidator@updateProvider");
     try {
-      // Define validation schema for updating provider
+      // Define comprehensive validation schema for updating provider profile
       let schema = {
-        provider_id: joi.number().required().min(1),
-        first_name: joi.string().optional(),
-        last_name: joi.string().optional(),
+        // User fields
+        first_name: joi.string().min(2).max(50).optional(),
+        last_name: joi.string().min(2).max(50).optional(),
+        full_name: joi.string().min(2).max(100).optional(),
         email: joi.string().email().optional(),
+        gender: joi.number().valid(1, 2).optional(), // 1 = male, 2 = female
+        profile_image: joi.string().uri().optional(),
+        notification: joi.number().valid(0, 1).optional(),
+        fcm_token: joi.string().optional(),
+        
+        // Provider fields
+        provider_type: joi.string().valid('individual', 'salon').optional(),
+        salon_name: joi.string().min(2).max(100).optional(),
+        banner_image: joi.string().uri().optional(),
+        description: joi.string().max(1000).optional(),
+        national_id_image_url: joi.string().uri().optional(),
+        freelance_certificate_image_url: joi.string().uri().optional(),
+        commercial_registration_image_url: joi.string().uri().optional(),
+        is_available: joi.number().valid(0, 1).optional(),
+        subscription_id: joi.number().min(0).optional(),
+        subscription_expiry: joi.date().optional(),
+        
+        // Address fields
+        address: joi.string().max(500).optional(),
+        latitude: joi.number().min(-90).max(90).optional(),
+        longitude: joi.number().min(-180).max(180).optional(),
         country_id: joi.number().min(1).optional(),
         city_id: joi.number().min(1).optional(),
-        status: joi.number().valid(1, 2, 3).optional(),
+        
+        // Bank fields
+        account_holder_name: joi.string().min(2).max(100).optional(),
+        bank_name: joi.string().min(2).max(100).optional(),
+        iban: joi.string().min(10).max(50).optional(),
+        
+        // Availability fields
+        availability: joi.array().items(
+          joi.object({
+            day: joi.string().valid('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday').required(),
+            from_time: joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
+            to_time: joi.string().pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/).required(),
+            available: joi.number().valid(0, 1).optional()
+          })
+        ).optional(),
+        
+        // Service list fields
+        service_list: joi.array().items(
+          joi.object({
+            id: joi.number().min(1).required(),
+            title: joi.string().min(1).max(200).optional(),
+            price: joi.number().min(0).precision(2).optional(),
+            description: joi.string().max(1000).optional(),
+            service_image: joi.string().uri().optional(),
+            status: joi.number().valid(0, 1).optional(),
+            have_offers: joi.number().valid(0, 1).optional(),
+            service_location: joi.number().valid(1, 2, 3).optional()
+          })
+        ).optional(),
       };
 
       // Validate request body against schema
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
-        return response.validationError("invalid request", res, errors[0]);
+        return response.validationError("Invalid update data", res, {
+          error_code: 'VALIDATION_ERROR',
+          message: errors[0],
+          field: errors[0].path ? errors[0].path[0] : 'unknown'
+        });
+      }
+
+      // Validate that at least one field is provided
+      if (!req.body || Object.keys(req.body).length === 0) {
+        return response.badRequest("No update data provided", res, {
+          error_code: 'MISSING_UPDATE_DATA',
+          message: 'Please provide at least one field to update'
+        });
       }
 
       next();
@@ -922,4 +1091,6 @@ module.exports = class ProviderValidator {
       return response.exception("Server error occurred", res);
     }
   }
+
+
 }

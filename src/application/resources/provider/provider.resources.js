@@ -185,7 +185,28 @@ module.exports = class ProviderResources {
         order: [
           [sortBy, sortOrder]  
         ],
-        attributes: attributes
+        attributes: attributes,
+        include: [
+          {
+            model: Modles.models.User,
+            as: 'user',
+            attributes: [
+              'id',
+              'first_name',
+              'last_name',
+              'full_name',
+              'email',
+              'phone_code',
+              'phone_number',
+              'gender',
+              'is_verified',
+              'verified_at',
+              'profile_image',
+              'status',
+              'notification'
+            ]
+          }
+        ]
       });
       const totalPages = Math.ceil(result.count / limit);
       return {

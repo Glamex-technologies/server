@@ -304,6 +304,14 @@ module.exports = class ProviderController {
       console.log("ProviderController@authenticate");
       const user = req.user; // User information from middleware (phone, password auth)
 
+      // Check if user account is active
+      if (user.status !== 1) {
+        return response.forbidden("Your account is not active", res, {
+          error_code: 'ACCOUNT_INACTIVE',
+          message: 'Your account has been deactivated. Please contact support for assistance.'
+        });
+      }
+
       // Check if user is verified
       if (!user.is_verified) {
         // Generate OTP and set it in database (hardcoded as 1111 for now)
@@ -386,7 +394,7 @@ module.exports = class ProviderController {
 
       // Check if profile is approved by admin (only if steps are completed)
       if (serviceProvider.step_completed === 6 && serviceProvider.is_approved !== 1) {
-        console.log(`🔍 Provider ${serviceProvider.id}: Steps complete but not approved by admin`);
+        console.log(`🔍 Provider ${serviceProvider.id}: Steps complete but approval status is ${serviceProvider.is_approved}`);
         
         // Generate token even for unapproved profiles so user can check status
         const userObj = {
@@ -397,11 +405,40 @@ module.exports = class ProviderController {
         };
 
         const accessToken = await genrateToken(userObj);
-        return response.validationError('Wait for the admin to verify your profile', res, {
-          access_token: accessToken,
-          approval_required: true,
-          message: 'Your profile is complete and under review by admin. You will be notified once approved.'
-        });
+        
+        // Handle different approval states
+        if (serviceProvider.is_approved === 0) {
+          // Pending approval
+          return response.validationError('Wait for the admin to verify your profile', res, {
+            access_token: accessToken,
+            approval_required: true,
+            approval_status: 'pending',
+            message: 'Your profile is complete and under review by admin. You will be notified once approved.'
+          });
+        } else if (serviceProvider.is_approved === 2) {
+          // Rejected
+          return response.validationError('Your profile has been rejected by admin', res, {
+            access_token: accessToken,
+            approval_required: true,
+            approval_status: 'rejected',
+            rejection_reason: serviceProvider.rejection_reason || 'No specific reason provided',
+            message: 'Your profile has been rejected. Please review the feedback and contact support if you have questions.',
+            next_steps: [
+              'Review the rejection reason provided',
+              'Address any issues mentioned in the feedback',
+              'Contact support for clarification if needed',
+              'You may reapply after addressing the concerns'
+            ]
+          });
+        } else {
+          // Unknown status
+          return response.validationError('Your profile approval status is unclear', res, {
+            access_token: accessToken,
+            approval_required: true,
+            approval_status: 'unknown',
+            message: 'There is an issue with your profile approval status. Please contact support.'
+          });
+        }
       }
 
       // All checks passed - generate token with user model data
@@ -1518,7 +1555,7 @@ module.exports = class ProviderController {
 
 
   /**
-   * Get paginated list of all providers with filtering options
+   * Get paginated list of all providers with comprehensive data (similar to getProviderProfile)
    */
   async getAllProviders(req, res) {
     console.log("ProviderController@getAllProviders");
@@ -1528,13 +1565,14 @@ module.exports = class ProviderController {
     const sortOrder = req.query.sortOrder || "DESC";
     const { search, type, status, provider_type } = req.query;
 
-    const query = {
+    // Build query for ServiceProvider table
+    const providerQuery = {
       ...(search && {
         [Op.or]: [
-          { first_name: { [Op.like]: `%${search}%` } },
-          { last_name: { [Op.like]: `%${search}%` } },
-          { email: { [Op.like]: `%${search}%` } },
-          { phone_number: { [Op.like]: `%${search}%` } },
+          { '$user.first_name$': { [Op.like]: `%${search}%` } },
+          { '$user.last_name$': { [Op.like]: `%${search}%` } },
+          { '$user.email$': { [Op.like]: `%${search}%` } },
+          { '$user.phone_number$': { [Op.like]: `%${search}%` } },
         ],
       }),
       ...(type !== undefined &&
@@ -1546,44 +1584,340 @@ module.exports = class ProviderController {
           provider_type: Number(provider_type),
         }),
       ...(status && {
-        status: {
+        '$user.status$': {
           [Op.like]: `%${status}%`,
         },
       }),
-      step_completed: {
-        [Op.gte]: 5,
-      },
     };
 
-    const attributes = [
-      "id",
-      "first_name",
-      "last_name",
-      "full_name",
-      "phone_code",
-      "phone_number",
-      "email",
-      "provider_type",
-      "gender",
-      "status",
-      "admin_verified",
-      "step_completed",
-      "created_at",
-    ];
-
     try {
-      const providers = await providerResources.getAllWithPagination(
-        query,
-        attributes,
-        sortBy,
-        sortOrder,
-        page,
-        limit
+      // Get all users with user_type = 'provider' first
+      const userQuery = {
+        user_type: 'provider',
+        ...(search && {
+          [Op.or]: [
+            { first_name: { [Op.like]: `%${search}%` } },
+            { last_name: { [Op.like]: `%${search}%` } },
+            { email: { [Op.like]: `%${search}%` } },
+            { phone_number: { [Op.like]: `%${search}%` } },
+          ],
+        }),
+        ...(status && {
+          status: {
+            [Op.like]: `%${status}%`,
+          },
+        }),
+      };
+
+      const offset = (page - 1) * limit;
+      
+      // Get users with pagination
+      const usersResult = await User.findAndCountAll({
+        where: userQuery,
+        limit: limit ? parseInt(limit) : 10,
+        offset: offset ? parseInt(offset) : 0,
+        order: [
+          [sortBy, sortOrder]
+        ],
+        attributes: [
+          'id',
+          'first_name',
+          'last_name',
+          'full_name',
+          'email',
+          'phone_code',
+          'phone_number',
+          'gender',
+          'is_verified',
+          'verified_at',
+          'profile_image',
+          'status',
+          'notification',
+          'created_at',
+          'updated_at'
+        ]
+      });
+
+      // Get comprehensive data for each user
+      const formattedProviders = await Promise.all(
+        usersResult.rows.map(async (user) => {
+          // Check if provider profile exists
+          const provider = await ServiceProvider.findOne({
+            where: { user_id: user.id }
+          });
+
+          // If no provider record exists, return user data with profile_required flag
+          if (!provider) {
+            return {
+              id: null,
+              user_id: user.id,
+              profile_required: true,
+              message: "Please complete your provider profile setup",
+              // User details
+              first_name: user.first_name,
+              last_name: user.last_name,
+              full_name: user.full_name,
+              email: user.email,
+              phone_code: user.phone_code,
+              phone_number: user.phone_number,
+              gender: user.gender,
+              is_verified: user.is_verified,
+              verified_at: user.verified_at,
+              profile_image: user.profile_image,
+              status: user.status,
+              notification: user.notification,
+              created_at: user.created_at,
+              updated_at: user.updated_at,
+              // Provider details (null for incomplete profiles)
+              provider_type: null,
+              salon_name: null,
+              banner_image: null,
+              description: null,
+              national_id_image_url: null,
+              freelance_certificate_image_url: null,
+              commercial_registration_image_url: null,
+              overall_rating: null,
+              total_reviews: null,
+              total_bookings: null,
+              total_customers: null,
+              is_approved: null,
+              is_available: null,
+              step_completed: null,
+              fcm_token: null,
+              subscription_id: null,
+              subscription_expiry: null,
+              admin_verified: null,
+              // Related data (empty for incomplete profiles)
+              address: null,
+              bank_details: [],
+              availability: [],
+              services: [],
+              gallery: []
+            };
+          }
+
+          // Get address details
+          let addressDetails = null;
+          try {
+            const address = await ServiceProviderAddress.findOne({
+              where: { user_id: user.id },
+              include: [
+                {
+                  model: db.models.Country,
+                  as: "country",
+                  attributes: ["id", "name"],
+                },
+                {
+                  model: db.models.City,
+                  as: "city",
+                  attributes: ["id", "name"],
+                },
+              ],
+            });
+            
+            if (address) {
+              addressDetails = {
+                id: address.id,
+                address: address.address,
+                latitude: address.latitude,
+                longitude: address.longitude,
+                country_id: address.country_id,
+                city_id: address.city_id,
+                country: address.country ? {
+                  id: address.country.id,
+                  name: address.country.name
+                } : null,
+                city: address.city ? {
+                  id: address.city.id,
+                  name: address.city.name
+                } : null
+              };
+            }
+          } catch (addressError) {
+            console.log("Address not found or error:", addressError.message);
+            addressDetails = null;
+          }
+
+          // Get bank details
+          let bankDetails = [];
+          try {
+            const bankDetailsData = await BankDetails.findAll({
+              where: { service_provider_id: provider.id },
+              attributes: [
+                "id",
+                "bank_name",
+                "account_holder_name",
+                "iban"
+              ],
+            });
+            
+            bankDetails = bankDetailsData.map(bank => ({
+              id: bank.id,
+              bank_name: bank.bank_name,
+              account_holder_name: bank.account_holder_name,
+              iban: bank.iban
+            }));
+          } catch (bankError) {
+            console.log("Bank details not found or error:", bankError.message);
+            bankDetails = [];
+          }
+
+          // Get availability
+          let availability = [];
+          try {
+            const availabilityData = await ServiceProviderAvailability.findAll({
+              where: { service_provider_id: provider.id },
+              attributes: [
+                "id",
+                "day",
+                "from_time",
+                "to_time",
+                "available"
+              ],
+            });
+            
+            availability = availabilityData.map(avail => ({
+              id: avail.id,
+              day: avail.day,
+              from_time: avail.from_time,
+              to_time: avail.to_time,
+              available: avail.available
+            }));
+          } catch (availabilityError) {
+            console.log("Availability not found or error:", availabilityError.message);
+            availability = [];
+          }
+
+          // Get services
+          let services = [];
+          try {
+            const servicesData = await ServiceList.findAll({
+              where: { service_provider_id: provider.id },
+              include: [
+                {
+                  model: db.models.Category,
+                  as: 'category',
+                  attributes: ['id', 'title', 'image']
+                },
+                {
+                  model: db.models.subcategory,
+                  as: 'subcategory',
+                  attributes: ['id', 'title', 'image']
+                },
+                {
+                  model: db.models.ServiceLocation,
+                  as: 'location',
+                  attributes: ['id', 'title', 'description']
+                }
+              ],
+              order: [['created_at', 'DESC']]
+            });
+            
+            services = servicesData.map(service => ({
+              id: service.id,
+              title: service.title,
+              service_id: service.service_id,
+              category_id: service.category_id,
+              sub_category_id: service.sub_category_id,
+              price: service.price,
+              description: service.description,
+              service_image: service.service_image,
+              service_location: service.service_location,
+              is_sub_service: service.is_sub_service,
+              have_offers: service.have_offers,
+              status: service.status,
+              category: service.category,
+              subcategory: service.subcategory,
+              location: service.location
+            }));
+          } catch (servicesError) {
+            console.log("Services not found or error:", servicesError.message);
+            services = [];
+          }
+
+          // Get gallery
+          let gallery = [];
+          try {
+            const galleryData = await db.models.Gallery.findAll({
+              where: { provider_id: provider.id },
+              attributes: ["id", "image", "status", "type"],
+            });
+            
+            gallery = galleryData.map(img => ({
+              id: img.id,
+              image: img.image,
+              status: img.status,
+              type: img.type
+            }));
+          } catch (galleryError) {
+            console.log("Gallery not found or error:", galleryError.message);
+            gallery = [];
+          }
+
+          // Return comprehensive provider data
+          return {
+            id: provider.id,
+            user_id: provider.user_id,
+            profile_required: false,
+            // User details
+            first_name: user.first_name,
+            last_name: user.last_name,
+            full_name: user.full_name,
+            email: user.email,
+            phone_code: user.phone_code,
+            phone_number: user.phone_number,
+            gender: user.gender,
+            is_verified: user.is_verified,
+            verified_at: user.verified_at,
+            profile_image: user.profile_image,
+            status: user.status,
+            notification: user.notification,
+            // Provider details
+            provider_type: provider.provider_type,
+            salon_name: provider.salon_name,
+            banner_image: provider.banner_image,
+            description: provider.description,
+            national_id_image_url: provider.national_id_image_url,
+            freelance_certificate_image_url: provider.freelance_certificate_image_url,
+            commercial_registration_image_url: provider.commercial_registration_image_url,
+            overall_rating: provider.overall_rating,
+            total_reviews: provider.total_reviews,
+            total_bookings: provider.total_bookings,
+            total_customers: provider.total_customers,
+                          is_approved: provider.is_approved,
+              rejection_reason: provider.rejection_reason,
+              is_available: provider.is_available,
+              step_completed: provider.step_completed,
+              fcm_token: provider.fcm_token,
+              subscription_id: provider.subscription_id,
+              subscription_expiry: provider.subscription_expiry,
+            created_at: provider.created_at,
+            updated_at: provider.updated_at,
+            // Related data
+            address: addressDetails,
+            bank_details: bankDetails,
+            availability: availability,
+            services: services,
+            gallery: gallery
+          };
+        })
       );
+
+      const totalPages = Math.ceil(usersResult.count / limit);
+      const responseData = {
+        providers: formattedProviders,
+        pagination: {
+          totalRecords: usersResult.count,
+          perPage: limit,
+          currentPage: page,
+          totalPages
+        }
+      };
+
       return response.success(
         "Providers list retrieved successfully",
         res,
-        providers
+        responseData
       );
     } catch (error) {
       console.error("Error fetching providers:", error);
@@ -1596,38 +1930,122 @@ module.exports = class ProviderController {
    */
   async providerProfileAction(req, res) {
     console.log("ProviderController@providerProfileAction");
+    console.log("Request body:", req.body);
+    console.log("Request params:", req.params);
+    
+    // Check if request body exists and has required fields
+    if (!req.body || Object.keys(req.body).length === 0) {
+      return response.badRequest("Request body is required", res, {
+        error_code: 'MISSING_REQUEST_BODY',
+        message: 'Request body must contain approval action'
+      });
+    }
+    
     const data = req.body;
-    let serviceProvider = await providerResources.findOne({
-      id: data.provider_id,
-    });
-
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
+    const providerId = parseInt(req.params.provider_id);
+    
+    // Validate that approve field exists
+    if (!data.hasOwnProperty('approve')) {
+      return response.badRequest("Approval action is required", res, {
+        error_code: 'MISSING_APPROVAL_ACTION',
+        message: 'Request body must contain approve field (1 for approve, 2 for reject)'
+      });
     }
+    
+    try {
+      // Find the service provider by ID
+      const serviceProvider = await ServiceProvider.findByPk(providerId, {
+        include: [
+          {
+            model: User,
+            as: 'user',
+            attributes: ['id', 'first_name', 'last_name', 'full_name', 'email', 'phone_code', 'phone_number']
+          }
+        ]
+      });
 
-    let responseMessage = "Provider profile has been approved successfully";
-    if (data.approve == 2) {
-      responseMessage = "Provider profile has been rejected";
+      if (!serviceProvider) {
+        return response.notFound("Provider account not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider found with the specified ID'
+        });
+      }
+
+      // Validate approval action
+      if (![1, 2].includes(data.approve)) {
+        return response.badRequest("Invalid approval action. Use 1 for approve or 2 for reject", res, {
+          error_code: 'INVALID_APPROVAL_ACTION',
+          message: 'Approval action must be 1 (approve) or 2 (reject)'
+        });
+      }
+
+      // Validate rejection reason is provided when rejecting
+      if (data.approve === 2 && (!data.reason || data.reason.trim().length === 0)) {
+        return response.badRequest("Rejection reason is required when rejecting a provider profile", res, {
+          error_code: 'REJECTION_REASON_REQUIRED',
+          message: 'Please provide a reason for rejection'
+        });
+      }
+
+      // Prepare update data
+      const updateData = {
+        is_approved: data.approve
+      };
+
+      // Add rejection reason if rejecting
+      if (data.approve === 2) {
+        updateData.rejection_reason = data.reason.trim();
+      } else {
+        // Clear rejection reason when approving
+        updateData.rejection_reason = null;
+      }
+
+      // Update the service provider
+      await serviceProvider.update(updateData);
+
+      // Prepare response message
+      let responseMessage = "Provider profile has been approved successfully";
+      let statusMessage = "approved";
+      
+      if (data.approve === 2) {
+        responseMessage = "Provider profile has been rejected";
+        statusMessage = "rejected";
+      }
+
+      // Get updated provider data
+      const updatedProvider = await ServiceProvider.findByPk(providerId, {
+        include: [
+          {
+            model: User,
+            as: 'user',
+            attributes: ['id', 'first_name', 'last_name', 'full_name', 'email', 'phone_code', 'phone_number']
+          }
+        ]
+      });
+
+      const serviceProviderObj = {
+        id: updatedProvider.id,
+        user_id: updatedProvider.user_id,
+        first_name: updatedProvider.user.first_name,
+        last_name: updatedProvider.user.last_name,
+        full_name: updatedProvider.user.full_name,
+        email: updatedProvider.user.email,
+        phone_code: updatedProvider.user.phone_code,
+        phone_number: updatedProvider.user.phone_number,
+        provider_type: updatedProvider.provider_type,
+        salon_name: updatedProvider.salon_name,
+        step_completed: updatedProvider.step_completed,
+        is_approved: updatedProvider.is_approved,
+        rejection_reason: updatedProvider.rejection_reason,
+        status: statusMessage,
+        updated_at: updatedProvider.updated_at
+      };
+
+      return response.success(responseMessage, res, serviceProviderObj);
+    } catch (error) {
+      console.error("Error in providerProfileAction:", error);
+      return response.exception("An error occurred while processing the provider profile action", res);
     }
-
-    serviceProvider = await providerResources.updateProvider(
-      { admin_verified: data.approve },
-      { id: data.provider_id }
-    );
-
-    const serviceProviderObj = {
-      id: serviceProvider.id,
-      first_name: serviceProvider.first_name,
-      last_name: serviceProvider.last_name,
-      full_name: serviceProvider.full_name,
-      email: serviceProvider.email,
-      phone_code: serviceProvider.phone_code,
-      phone_number: serviceProvider.phone_number,
-      step_completed: serviceProvider.step_completed,
-      admin_verified: serviceProvider.admin_verified,
-    };
-
-    return response.success(responseMessage, res, serviceProviderObj);
   }
 
   /**
@@ -1642,6 +2060,31 @@ module.exports = class ProviderController {
     const user = req.user;
 
     try {
+      // If no provider record exists, return user data with profile_required flag
+      if (!provider) {
+        const userProfile = {
+          user: {
+            id: user.id,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            full_name: user.full_name,
+            email: user.email,
+            phone_code: user.phone_code,
+            phone_number: user.phone_number,
+            gender: user.gender,
+            is_verified: user.is_verified,
+            verified_at: user.verified_at,
+            profile_image: user.profile_image,
+            status: user.status,
+            notification: user.notification
+          },
+          profile_required: true,
+          message: "Please complete your provider profile setup"
+        };
+        
+        return response.success("User profile retrieved. Provider profile setup required.", res, userProfile);
+      }
+
       // Get basic provider details first (without includes to avoid association errors)
       const basicProvider = await ServiceProvider.findByPk(provider.id);
       
@@ -1718,20 +2161,16 @@ module.exports = class ProviderController {
           attributes: [
             "id",
             "bank_name",
-            "account_number",
             "account_holder_name",
-            "iban",
-            "swift_code"
+            "iban"
           ],
         });
         
         bankDetails = bankDetailsData.map(bank => ({
           id: bank.id,
           bank_name: bank.bank_name,
-          account_number: bank.account_number,
           account_holder_name: bank.account_holder_name,
-          iban: bank.iban,
-          swift_code: bank.swift_code
+          iban: bank.iban
         }));
       } catch (bankError) {
         console.log("Bank details not found or error:", bankError.message);
@@ -1748,8 +2187,7 @@ module.exports = class ProviderController {
             "day",
             "from_time",
             "to_time",
-            "available",
-            "is_break"
+            "available"
           ],
         });
         
@@ -1758,8 +2196,7 @@ module.exports = class ProviderController {
           day: avail.day,
           from_time: avail.from_time,
           to_time: avail.to_time,
-          available: avail.available,
-          is_break: avail.is_break
+          available: avail.available
         }));
       } catch (availabilityError) {
         console.log("Availability not found or error:", availabilityError.message);
@@ -1773,27 +2210,40 @@ module.exports = class ProviderController {
           where: { service_provider_id: provider.id },
           include: [
             {
-              model: db.models.Service,
-              as: "service",
-              attributes: ["id", "name", "description", "price", "duration"],
+              model: db.models.Category,
+              as: 'category',
+              attributes: ['id', 'title', 'image']
             },
+            {
+              model: db.models.subcategory,
+              as: 'subcategory',
+              attributes: ['id', 'title', 'image']
+            },
+            {
+              model: db.models.ServiceLocation,
+              as: 'location',
+              attributes: ['id', 'title', 'description']
+            }
           ],
+          order: [['created_at', 'DESC']]
         });
         
         services = servicesData.map(service => ({
           id: service.id,
+          title: service.title,
           service_id: service.service_id,
+          category_id: service.category_id,
+          sub_category_id: service.sub_category_id,
           price: service.price,
-          duration: service.duration,
           description: service.description,
           service_image: service.service_image,
-          service: service.service ? {
-            id: service.service.id,
-            name: service.service.name,
-            description: service.service.description,
-            price: service.service.price,
-            duration: service.service.duration
-          } : null
+          service_location: service.service_location,
+          is_sub_service: service.is_sub_service,
+          have_offers: service.have_offers,
+          status: service.status,
+          category: service.category,
+          subcategory: service.subcategory,
+          location: service.location
         }));
       } catch (servicesError) {
         console.log("Services not found or error:", servicesError.message);
@@ -1804,15 +2254,15 @@ module.exports = class ProviderController {
       let gallery = [];
       try {
         const galleryData = await db.models.Gallery.findAll({
-          where: { service_provider_id: provider.id },
-          attributes: ["id", "image_url", "title", "description"],
+          where: { provider_id: provider.id },
+          attributes: ["id", "image", "status", "type"],
         });
         
         gallery = galleryData.map(img => ({
           id: img.id,
-          image_url: img.image_url,
-          title: img.title,
-          description: img.description
+          image: img.image,
+          status: img.status,
+          type: img.type
         }));
       } catch (galleryError) {
         console.log("Gallery not found or error:", galleryError.message);
@@ -1829,6 +2279,7 @@ module.exports = class ProviderController {
         banner_image: basicProvider.banner_image,
         step_completed: basicProvider.step_completed,
         is_approved: basicProvider.is_approved,
+        rejection_reason: basicProvider.rejection_reason,
         is_available: basicProvider.is_available,
         overall_rating: basicProvider.overall_rating,
         total_reviews: basicProvider.total_reviews,
@@ -1883,67 +2334,340 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Get provider details (for admin use - keeping the original method for admin routes)
+   * Admin API to change service provider status (active/inactive)
+   */
+  async changeProviderStatus(req, res) {
+    console.log("ProviderController@changeProviderStatus");
+    const { provider_id, status } = req.body;
+
+    try {
+      // Validate required fields
+      if (!provider_id) {
+        return response.badRequest("Provider ID is required", res, {
+          error_code: 'MISSING_PROVIDER_ID',
+          message: 'Provider ID must be provided'
+        });
+      }
+
+      if (status === undefined || status === null) {
+        return response.badRequest("Status is required", res, {
+          error_code: 'MISSING_STATUS',
+          message: 'Status must be provided (1 for active, 0 for inactive)'
+        });
+      }
+
+      // Validate status value
+      if (![0, 1].includes(status)) {
+        return response.badRequest("Invalid status value. Use 1 for active or 0 for inactive", res, {
+          error_code: 'INVALID_STATUS_VALUE',
+          message: 'Status must be 1 (active) or 0 (inactive)'
+        });
+      }
+
+      // Find the provider by ID
+      const provider = await ServiceProvider.findByPk(provider_id, {
+        include: [
+          {
+            model: User,
+            as: 'user',
+            attributes: ['id', 'first_name', 'last_name', 'full_name', 'email', 'phone_code', 'phone_number', 'status']
+          }
+        ]
+      });
+
+      if (!provider) {
+        return response.notFound("Provider account not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider found with the specified ID'
+        });
+      }
+
+      // Check if user exists
+      if (!provider.user) {
+        return response.notFound("User account not found", res, {
+          error_code: 'USER_NOT_FOUND',
+          message: 'User account associated with this provider not found'
+        });
+      }
+
+      // Update user status (this controls authentication)
+      await provider.user.update({ status: status });
+
+      // Prepare response message
+      const statusText = status === 1 ? 'active' : 'inactive';
+      const responseMessage = `Provider status has been changed to ${statusText} successfully`;
+
+      // Get updated provider data
+      const updatedProvider = await ServiceProvider.findByPk(provider_id, {
+        include: [
+          {
+            model: User,
+            as: 'user',
+            attributes: ['id', 'first_name', 'last_name', 'full_name', 'email', 'phone_code', 'phone_number', 'status']
+          }
+        ]
+      });
+
+      const providerData = {
+        id: updatedProvider.id,
+        user_id: updatedProvider.user_id,
+        first_name: updatedProvider.user.first_name,
+        last_name: updatedProvider.user.last_name,
+        full_name: updatedProvider.user.full_name,
+        email: updatedProvider.user.email,
+        phone_code: updatedProvider.user.phone_code,
+        phone_number: updatedProvider.user.phone_number,
+        provider_type: updatedProvider.provider_type,
+        salon_name: updatedProvider.salon_name,
+        status: updatedProvider.user.status,
+        status_text: statusText,
+        updated_at: updatedProvider.user.updated_at
+      };
+
+      return response.success(responseMessage, res, providerData);
+    } catch (error) {
+      console.error("Error in changeProviderStatus:", error);
+      return response.exception("An error occurred while changing provider status", res);
+    }
+  }
+
+  /**
+   * Get specific provider details by ID with comprehensive data structure (similar to getAllProviders)
    */
   async getProvider(req, res) {
     console.log("ProviderController@getProvider");
-    const data = req.query;
-    const serviceProvider = await providerResources.getAllDetails({
-      id: data.provider_id,
-    });
+    const providerId = parseInt(req.params.provider_id);
 
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
-    }
+    try {
+      // Find the provider by ID
+      const provider = await ServiceProvider.findByPk(providerId);
+      
+      if (!provider) {
+        return response.badRequest("Provider account not found", res, false);
+      }
 
-    // Get address information
-    const serviceProviderAddress = await ServiceProviderAddress.findOne({
-      where: { user_id: serviceProvider.user_id }
-    });
+      // Get user details
+      const user = await User.findByPk(provider.user_id);
+      
+      if (!user) {
+        return response.badRequest("User account not found", res, false);
+      }
 
-    const serviceProviderObj = {
-      id: serviceProvider.id,
-      first_name: serviceProvider.first_name,
-      last_name: serviceProvider.last_name,
-      full_name: serviceProvider.full_name,
-      email: serviceProvider.email,
-      phone_code: serviceProvider.phone_code,
-      phone_number: serviceProvider.phone_number,
-      provider_type: serviceProvider.provider_type,
-      salon_name: serviceProvider.salon_name,
-      city_id: serviceProviderAddress?.city_id || null,
-      banner_image: serviceProvider.banner_image,
-      description: serviceProvider.description,
-      step_completed: serviceProvider.step_completed,
-      admin_verified: serviceProvider.admin_verified,
-      serviceProviderDetail: {
-        id: serviceProvider.serviceProviderDetail.id,
-        national_id: serviceProvider.serviceProviderDetail.national_id,
-        bank_account_name:
-          serviceProvider.serviceProviderDetail.bank_account_name,
-        bank_name: serviceProvider.serviceProviderDetail.bank_name,
-        account_number: serviceProvider.serviceProviderDetail.account_number,
-        freelance_certificate:
-          serviceProvider.serviceProviderDetail.freelance_certificate,
-        commertial_certificate: serviceProvider.commertial_certificate,
-      },
-      serviceProviderAvailability:
-        serviceProvider.serviceProviderAvailability.map((availability) => {
-          return {
-            id: availability.id,
-            day: availability.day,
-            from_time: availability.from_time,
-            to_time: availability.to_time,
-            available: availability.available,
+      // Get address details
+      let addressDetails = null;
+      try {
+        const address = await ServiceProviderAddress.findOne({
+          where: { user_id: user.id },
+          include: [
+            {
+              model: db.models.Country,
+              as: "country",
+              attributes: ["id", "name"],
+            },
+            {
+              model: db.models.City,
+              as: "city",
+              attributes: ["id", "name"],
+            },
+          ],
+        });
+        
+        if (address) {
+          addressDetails = {
+            id: address.id,
+            address: address.address,
+            latitude: address.latitude,
+            longitude: address.longitude,
+            country_id: address.country_id,
+            city_id: address.city_id,
+            country: address.country ? {
+              id: address.country.id,
+              name: address.country.name
+            } : null,
+            city: address.city ? {
+              id: address.city.id,
+              name: address.city.name
+            } : null
           };
-        }),
-    };
+        }
+      } catch (addressError) {
+        console.log("Address not found or error:", addressError.message);
+        addressDetails = null;
+      }
 
-    return response.success(
-      "Provider details retrieved successfully",
-      res,
-      serviceProviderObj
-    );
+      // Get bank details
+      let bankDetails = [];
+      try {
+        const bankDetailsData = await BankDetails.findAll({
+          where: { service_provider_id: provider.id },
+          attributes: [
+            "id",
+            "bank_name",
+            "account_holder_name",
+            "iban"
+          ],
+        });
+        
+        bankDetails = bankDetailsData.map(bank => ({
+          id: bank.id,
+          bank_name: bank.bank_name,
+          account_holder_name: bank.account_holder_name,
+          iban: bank.iban
+        }));
+      } catch (bankError) {
+        console.log("Bank details not found or error:", bankError.message);
+        bankDetails = [];
+      }
+
+      // Get availability
+      let availability = [];
+      try {
+        const availabilityData = await ServiceProviderAvailability.findAll({
+          where: { service_provider_id: provider.id },
+          attributes: [
+            "id",
+            "day",
+            "from_time",
+            "to_time",
+            "available"
+          ],
+        });
+        
+        availability = availabilityData.map(avail => ({
+          id: avail.id,
+          day: avail.day,
+          from_time: avail.from_time,
+          to_time: avail.to_time,
+          available: avail.available
+        }));
+      } catch (availabilityError) {
+        console.log("Availability not found or error:", availabilityError.message);
+        availability = [];
+      }
+
+      // Get services
+      let services = [];
+      try {
+        const servicesData = await ServiceList.findAll({
+          where: { service_provider_id: provider.id },
+          include: [
+            {
+              model: db.models.Category,
+              as: 'category',
+              attributes: ['id', 'title', 'image']
+            },
+            {
+              model: db.models.subcategory,
+              as: 'subcategory',
+              attributes: ['id', 'title', 'image']
+            },
+            {
+              model: db.models.ServiceLocation,
+              as: 'location',
+              attributes: ['id', 'title', 'description']
+            }
+          ],
+          order: [['created_at', 'DESC']]
+        });
+        
+        services = servicesData.map(service => ({
+          id: service.id,
+          title: service.title,
+          service_id: service.service_id,
+          category_id: service.category_id,
+          sub_category_id: service.sub_category_id,
+          price: service.price,
+          description: service.description,
+          service_image: service.service_image,
+          service_location: service.service_location,
+          is_sub_service: service.is_sub_service,
+          have_offers: service.have_offers,
+          status: service.status,
+          category: service.category,
+          subcategory: service.subcategory,
+          location: service.location
+        }));
+      } catch (servicesError) {
+        console.log("Services not found or error:", servicesError.message);
+        services = [];
+      }
+
+      // Get gallery
+      let gallery = [];
+      try {
+        const galleryData = await db.models.Gallery.findAll({
+          where: { provider_id: provider.id },
+          attributes: ["id", "image", "status", "type"],
+        });
+        
+        gallery = galleryData.map(img => ({
+          id: img.id,
+          image: img.image,
+          status: img.status,
+          type: img.type
+        }));
+      } catch (galleryError) {
+        console.log("Gallery not found or error:", galleryError.message);
+        gallery = [];
+      }
+
+      // Return comprehensive provider data (same structure as getAllProviders)
+      const providerData = {
+        id: provider.id,
+        user_id: provider.user_id,
+        profile_required: false,
+        // User details
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        email: user.email,
+        phone_code: user.phone_code,
+        phone_number: user.phone_number,
+        gender: user.gender,
+        is_verified: user.is_verified,
+        verified_at: user.verified_at,
+        profile_image: user.profile_image,
+        status: user.status,
+        notification: user.notification,
+        // Provider details
+        provider_type: provider.provider_type,
+        salon_name: provider.salon_name,
+        banner_image: provider.banner_image,
+        description: provider.description,
+        national_id_image_url: provider.national_id_image_url,
+        freelance_certificate_image_url: provider.freelance_certificate_image_url,
+        commercial_registration_image_url: provider.commercial_registration_image_url,
+        overall_rating: provider.overall_rating,
+        total_reviews: provider.total_reviews,
+        total_bookings: provider.total_bookings,
+        total_customers: provider.total_customers,
+        is_approved: provider.is_approved,
+        rejection_reason: provider.rejection_reason,
+        is_available: provider.is_available,
+        step_completed: provider.step_completed,
+        fcm_token: provider.fcm_token,
+        subscription_id: provider.subscription_id,
+        subscription_expiry: provider.subscription_expiry,
+        admin_verified: provider.admin_verified,
+        created_at: provider.created_at,
+        updated_at: provider.updated_at,
+        // Related data
+        address: addressDetails,
+        bank_details: bankDetails,
+        availability: availability,
+        services: services,
+        gallery: gallery
+      };
+
+      return response.success(
+        "Provider details retrieved successfully",
+        res,
+        providerData
+      );
+    } catch (error) {
+      console.error("Error fetching provider:", error);
+      return response.exception("Failed to retrieve provider details", res);
+    }
   }
 
   /**
@@ -1951,41 +2675,458 @@ module.exports = class ProviderController {
    */
   async updateProvider(req, res) {
     console.log("ProviderController@updateProvider");
-    const data = req.body;
-    const serviceProvider = await providerResources.findOne({
-      id: data.provider_id,
-    });
+    const updateData = req.body;
+    const user = req.user;
+    const provider = req.provider;
 
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
-    }
-
-    // Remove provider_id to prevent updating it
-    const { provider_id, ...updateData } = data;
-
-    // Only include valid keys for update
-    const allowedFields = [
-      "first_name",
-      "last_name",
-      "email",
-      "country_id",
-      "city_id",
-      "status",
-    ];
-    const finalUpdateData = {};
-
-    for (const key of allowedFields) {
-      if (updateData.hasOwnProperty(key)) {
-        finalUpdateData[key] = updateData[key];
+    try {
+      // Validate that update data is provided
+      if (!updateData || Object.keys(updateData).length === 0) {
+        return response.badRequest("Update data is required", res, {
+          error_code: 'MISSING_UPDATE_DATA',
+          message: 'Please provide the fields you want to update'
+        });
       }
+
+      // Separate fields for each model
+      const userFields = {};
+      const providerFields = {};
+      const addressFields = {};
+      const bankFields = {};
+      const availabilityFields = {};
+      const serviceListFields = {};
+
+      // Define allowed fields for each model
+      const allowedUserFields = [
+        'first_name', 'last_name', 'full_name', 'email', 'gender', 
+        'profile_image', 'notification', 'fcm_token'
+      ];
+
+      const allowedProviderFields = [
+        'provider_type', 'salon_name', 'banner_image', 'description',
+        'national_id_image_url', 'freelance_certificate_image_url', 
+        'commercial_registration_image_url', 'is_available', 'notification',
+        'fcm_token', 'subscription_id', 'subscription_expiry'
+      ];
+
+      const allowedAddressFields = [
+        'address', 'latitude', 'longitude', 'country_id', 'city_id'
+      ];
+
+      const allowedBankFields = [
+        'account_holder_name', 'bank_name', 'iban'
+      ];
+
+      const allowedAvailabilityFields = [
+        'availability'
+      ];
+
+      const allowedServiceListFields = [
+        'service_list'
+      ];
+
+      // Categorize fields
+      Object.keys(updateData).forEach(key => {
+        if (allowedUserFields.includes(key)) {
+          userFields[key] = updateData[key];
+        } else if (allowedProviderFields.includes(key)) {
+          providerFields[key] = updateData[key];
+        } else if (allowedAddressFields.includes(key)) {
+          addressFields[key] = updateData[key];
+        } else if (allowedBankFields.includes(key)) {
+          bankFields[key] = updateData[key];
+        } else if (allowedAvailabilityFields.includes(key)) {
+          availabilityFields[key] = updateData[key];
+        } else if (allowedServiceListFields.includes(key)) {
+          serviceListFields[key] = updateData[key];
+        }
+      });
+
+      // Validate that at least one valid field is provided
+      if (Object.keys(userFields).length === 0 && 
+          Object.keys(providerFields).length === 0 && 
+          Object.keys(addressFields).length === 0 && 
+          Object.keys(bankFields).length === 0 &&
+          Object.keys(availabilityFields).length === 0 &&
+          Object.keys(serviceListFields).length === 0) {
+        return response.badRequest("No valid fields provided for update", res, {
+          error_code: 'INVALID_FIELDS',
+          message: 'Please provide valid fields to update',
+          allowed_fields: {
+            user: allowedUserFields,
+            provider: allowedProviderFields,
+            address: allowedAddressFields,
+            bank: allowedBankFields,
+            availability: allowedAvailabilityFields,
+            service_list: allowedServiceListFields
+          }
+        });
+      }
+
+      // Handle full_name update if first_name or last_name is updated
+      if (userFields.first_name || userFields.last_name) {
+        const currentUser = await User.findByPk(user.id);
+        const firstName = userFields.first_name || currentUser.first_name;
+        const lastName = userFields.last_name || currentUser.last_name;
+        userFields.full_name = `${firstName} ${lastName}`;
+      }
+
+      // Update User model if user fields are provided
+      if (Object.keys(userFields).length > 0) {
+        await user.update(userFields);
+        console.log("User fields updated:", Object.keys(userFields));
+      }
+
+      // Update ServiceProvider model if provider fields are provided
+      if (Object.keys(providerFields).length > 0 && provider) {
+        await provider.update(providerFields);
+        console.log("Provider fields updated:", Object.keys(providerFields));
+      }
+
+      // Update address if address fields are provided
+      if (Object.keys(addressFields).length > 0) {
+        let address = await ServiceProviderAddress.findOne({
+          where: { user_id: user.id }
+        });
+
+        if (address) {
+          await address.update(addressFields);
+        } else {
+          // Create new address record
+          await ServiceProviderAddress.create({
+            user_id: user.id,
+            ...addressFields
+          });
+        }
+        console.log("Address fields updated:", Object.keys(addressFields));
+      }
+
+      // Update bank details if bank fields are provided
+      if (Object.keys(bankFields).length > 0 && provider) {
+        let bankDetails = await BankDetails.findOne({
+          where: { service_provider_id: provider.id }
+        });
+
+        if (bankDetails) {
+          await bankDetails.update(bankFields);
+        } else {
+          // Create new bank details record
+          await BankDetails.create({
+            service_provider_id: provider.id,
+            ...bankFields
+          });
+        }
+        console.log("Bank fields updated:", Object.keys(bankFields));
+      }
+
+      // Update availability if availability fields are provided
+      if (Object.keys(availabilityFields).length > 0 && provider) {
+        const availabilityData = availabilityFields.availability;
+        
+        if (Array.isArray(availabilityData) && availabilityData.length > 0) {
+          // Validate availability data
+          const daysOfWeek = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+          const errors = [];
+          
+          availabilityData.forEach((item, index) => {
+            if (!item.day) {
+              errors.push(`Day is required for availability record ${index + 1}`);
+            } else if (!daysOfWeek.includes(item.day.toLowerCase())) {
+              errors.push(`Invalid day '${item.day}' for availability record ${index + 1}`);
+            }
+            
+            if (!item.from_time) {
+              errors.push(`From time is required for ${item.day}`);
+            }
+            
+            if (!item.to_time) {
+              errors.push(`To time is required for ${item.day}`);
+            }
+            
+            // Validate time format (HH:MM)
+            const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+            if (item.from_time && !timeRegex.test(item.from_time)) {
+              errors.push(`Invalid from_time format for ${item.day}. Use HH:MM format`);
+            }
+            if (item.to_time && !timeRegex.test(item.to_time)) {
+              errors.push(`Invalid to_time format for ${item.day}. Use HH:MM format`);
+            }
+            
+            // Validate time range
+            if (item.from_time && item.to_time) {
+              const fromTime = new Date(`2000-01-01T${item.from_time}:00`);
+              const toTime = new Date(`2000-01-01T${item.to_time}:00`);
+              if (fromTime >= toTime) {
+                errors.push(`From time must be before to time for ${item.day}`);
+              }
+            }
+          });
+
+          if (errors.length > 0) {
+            return response.badRequest(errors.join(", "), res, {
+              error_code: 'AVAILABILITY_VALIDATION_ERROR',
+              message: 'Invalid availability data provided'
+            });
+          }
+
+          // Delete existing availability records for this provider
+          await ServiceProviderAvailability.destroy({
+            where: { service_provider_id: provider.id }
+          });
+
+          // Create new availability records
+          const availabilityRecords = availabilityData.map(item => ({
+            service_provider_id: provider.id,
+            day: item.day.toLowerCase(),
+            from_time: item.from_time,
+            to_time: item.to_time,
+            available: item.available !== undefined ? item.available : 1
+          }));
+
+          await ServiceProviderAvailability.bulkCreate(availabilityRecords);
+          console.log("Availability updated:", availabilityData.length, "records");
+        }
+      }
+
+      // Update service list if service list fields are provided
+      if (Object.keys(serviceListFields).length > 0 && provider) {
+        const serviceListData = serviceListFields.service_list;
+        
+        if (Array.isArray(serviceListData) && serviceListData.length > 0) {
+          // Validate service list data
+          const errors = [];
+          
+          serviceListData.forEach((item, index) => {
+            if (!item.id) {
+              errors.push(`Service ID is required for service list record ${index + 1}`);
+            }
+            
+            if (item.title && typeof item.title !== 'string') {
+              errors.push(`Title must be a string for service list record ${index + 1}`);
+            }
+            
+            if (item.price !== undefined && (isNaN(item.price) || item.price < 0)) {
+              errors.push(`Price must be a positive number for service list record ${index + 1}`);
+            }
+            
+            if (item.description && typeof item.description !== 'string') {
+              errors.push(`Description must be a string for service list record ${index + 1}`);
+            }
+            
+            if (item.service_image && typeof item.service_image !== 'string') {
+              errors.push(`Service image must be a string for service list record ${index + 1}`);
+            }
+          });
+
+          if (errors.length > 0) {
+            return response.badRequest(errors.join(", "), res, {
+              error_code: 'SERVICE_LIST_VALIDATION_ERROR',
+              message: 'Invalid service list data provided'
+            });
+          }
+
+          // Update each service list item
+          for (const item of serviceListData) {
+            const updateData = {};
+            
+            if (item.title !== undefined) updateData.title = item.title;
+            if (item.price !== undefined) updateData.price = item.price;
+            if (item.description !== undefined) updateData.description = item.description;
+            if (item.service_image !== undefined) updateData.service_image = item.service_image;
+            if (item.status !== undefined) updateData.status = item.status;
+            if (item.have_offers !== undefined) updateData.have_offers = item.have_offers;
+            if (item.service_location !== undefined) updateData.service_location = item.service_location;
+            
+            if (Object.keys(updateData).length > 0) {
+              await ServiceList.update(updateData, {
+                where: { 
+                  id: item.id,
+                  service_provider_id: provider.id,
+                  deleted_at: null
+                }
+              });
+            }
+          }
+          console.log("Service list updated:", serviceListData.length, "records");
+        }
+      }
+
+      // Get updated data for response
+      const updatedUser = await User.findByPk(user.id);
+      const updatedProvider = provider ? await ServiceProvider.findByPk(provider.id) : null;
+      const updatedAddress = await ServiceProviderAddress.findOne({
+        where: { user_id: user.id },
+        include: [
+          {
+            model: db.models.Country,
+            as: "country",
+            attributes: ["id", "name"],
+          },
+          {
+            model: db.models.City,
+            as: "city",
+            attributes: ["id", "name"],
+          },
+        ],
+      });
+      const updatedBankDetails = provider ? await BankDetails.findOne({
+        where: { service_provider_id: provider.id }
+      }) : null;
+
+      // Get updated availability
+      let updatedAvailability = [];
+      if (provider) {
+        try {
+          const availabilityData = await ServiceProviderAvailability.findAll({
+            where: { service_provider_id: provider.id },
+            attributes: [
+              "id",
+              "day",
+              "from_time",
+              "to_time",
+              "available"
+            ],
+          });
+          
+          updatedAvailability = availabilityData.map(avail => ({
+            id: avail.id,
+            day: avail.day,
+            from_time: avail.from_time,
+            to_time: avail.to_time,
+            available: avail.available
+          }));
+        } catch (availabilityError) {
+          console.log("Availability not found or error:", availabilityError.message);
+          updatedAvailability = [];
+        }
+      }
+
+      // Get updated services
+      let updatedServices = [];
+      if (provider) {
+        try {
+          const servicesData = await ServiceList.findAll({
+            where: { 
+              service_provider_id: provider.id,
+              deleted_at: null
+            },
+            attributes: [
+              "id",
+              "title",
+              "service_id",
+              "category_id",
+              "sub_category_id",
+              "price",
+              "description",
+              "service_image",
+              "status",
+              "have_offers",
+              "service_location"
+            ],
+          });
+          
+          updatedServices = servicesData.map(service => ({
+            id: service.id,
+            title: service.title,
+            service_id: service.service_id,
+            category_id: service.category_id,
+            sub_category_id: service.sub_category_id,
+            price: service.price,
+            description: service.description,
+            service_image: service.service_image,
+            status: service.status,
+            have_offers: service.have_offers,
+            service_location: service.service_location
+          }));
+        } catch (servicesError) {
+          console.log("Services not found or error:", servicesError.message);
+          updatedServices = [];
+        }
+      }
+
+      // Prepare response data
+      const responseData = {
+        user: {
+          id: updatedUser.id,
+          first_name: updatedUser.first_name,
+          last_name: updatedUser.last_name,
+          full_name: updatedUser.full_name,
+          email: updatedUser.email,
+          phone_code: updatedUser.phone_code,
+          phone_number: updatedUser.phone_number,
+          gender: updatedUser.gender,
+          is_verified: updatedUser.is_verified,
+          verified_at: updatedUser.verified_at,
+          profile_image: updatedUser.profile_image,
+          status: updatedUser.status,
+          notification: updatedUser.notification,
+          fcm_token: updatedUser.fcm_token
+        },
+        provider: updatedProvider ? {
+          id: updatedProvider.id,
+          provider_type: updatedProvider.provider_type,
+          salon_name: updatedProvider.salon_name,
+          banner_image: updatedProvider.banner_image,
+          description: updatedProvider.description,
+          national_id_image_url: updatedProvider.national_id_image_url,
+          freelance_certificate_image_url: updatedProvider.freelance_certificate_image_url,
+          commercial_registration_image_url: updatedProvider.commercial_registration_image_url,
+          overall_rating: updatedProvider.overall_rating,
+          total_reviews: updatedProvider.total_reviews,
+          total_bookings: updatedProvider.total_bookings,
+          total_customers: updatedProvider.total_customers,
+          is_approved: updatedProvider.is_approved,
+          rejection_reason: updatedProvider.rejection_reason,
+          is_available: updatedProvider.is_available,
+          step_completed: updatedProvider.step_completed,
+          notification: updatedProvider.notification,
+          fcm_token: updatedProvider.fcm_token,
+          subscription_id: updatedProvider.subscription_id,
+          subscription_expiry: updatedProvider.subscription_expiry
+        } : null,
+        address: updatedAddress ? {
+          id: updatedAddress.id,
+          address: updatedAddress.address,
+          latitude: updatedAddress.latitude,
+          longitude: updatedAddress.longitude,
+          country_id: updatedAddress.country_id,
+          city_id: updatedAddress.city_id,
+          country: updatedAddress.country ? {
+            id: updatedAddress.country.id,
+            name: updatedAddress.country.name
+          } : null,
+          city: updatedAddress.city ? {
+            id: updatedAddress.city.id,
+            name: updatedAddress.city.name
+          } : null
+        } : null,
+        bank_details: updatedBankDetails ? {
+          id: updatedBankDetails.id,
+          account_holder_name: updatedBankDetails.account_holder_name,
+          bank_name: updatedBankDetails.bank_name,
+          iban: updatedBankDetails.iban
+        } : null,
+        availability: updatedAvailability,
+        services: updatedServices,
+        updated_fields: {
+          user: Object.keys(userFields),
+          provider: Object.keys(providerFields),
+          address: Object.keys(addressFields),
+          bank: Object.keys(bankFields),
+          availability: Object.keys(availabilityFields),
+          service_list: Object.keys(serviceListFields)
+        }
+      };
+
+      return response.success("Provider profile updated successfully", res, responseData);
+
+    } catch (error) {
+      console.error("Error updating provider profile:", error);
+      return response.exception("Failed to update provider profile", res);
     }
-
-    await providerResources.updateProvider(finalUpdateData, {
-      id: data.provider_id,
-    });
-
-    return response.success("Provider information updated successfully", res);
   }
+
+
 
   /**
    * Handle file uploads for provider documents
@@ -2287,42 +3428,163 @@ module.exports = class ProviderController {
   /**
    * Delete provider account after password verification
    */
+  /**
+   * Delete provider account with comprehensive soft deletion
+   * Implements industry-level account deletion with proper cleanup
+   */
   async deleteMyAccount(req, res) {
-    try {
-      const { password } = req.body;
-      const provider = req.provider;
-      const user = req.user;
-      
-      const isMatch = await bcrypt.compare(password, user.password);
+    console.log("ProviderController@deleteMyAccount");
+    const { password, reason_id } = req.body;
+    const user = req.user;
+    const provider = req.provider;
 
-      if (!isMatch) {
-        return response.badRequest(
-          "The password you entered is incorrect",
-          res
-        );
+    try {
+      // Validate password
+      if (!password) {
+        return response.badRequest("Password is required for account deletion", res, {
+          error_code: 'PASSWORD_REQUIRED',
+          message: 'Please provide your password to confirm account deletion'
+        });
       }
 
-      // Soft delete both provider and user
-      await providerResources.updateProvider(
-        { status: 0 },
-        { id: provider.id }
-      );
-      
-      await userResources.updateUser(
-        { status: 0 },
-        { id: user.id }
-      );
+      // Verify password
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return response.unauthorized("Incorrect password", res, {
+          error_code: 'INVALID_PASSWORD',
+          message: 'The password you entered is incorrect'
+        });
+      }
 
-      return response.success(
-        "Your account has been deleted successfully",
-        res
-      );
+      // Start transaction for atomic operations
+      const transaction = await db.sequelize.transaction();
+
+      try {
+        // Soft delete related data first (if provider exists)
+        if (provider) {
+          // Soft delete service lists
+          await ServiceList.update(
+            { status: 0, deleted_at: new Date() },
+            { 
+              where: { service_provider_id: provider.id },
+              transaction 
+            }
+          );
+
+          // Soft delete availability records
+          await ServiceProviderAvailability.update(
+            { available: 0, deleted_at: new Date() },
+            { 
+              where: { service_provider_id: provider.id },
+              transaction 
+            }
+          );
+
+          // Soft delete bank details
+          await BankDetails.update(
+            { deleted_at: new Date() },
+            { 
+              where: { service_provider_id: provider.id },
+              transaction 
+            }
+          );
+
+          // Soft delete gallery images
+          await db.models.Gallery.update(
+            { status: 0, deleted_at: new Date() },
+            { 
+              where: { provider_id: provider.id },
+              transaction 
+            }
+          );
+
+          // Soft delete service provider address
+          await ServiceProviderAddress.update(
+            { deleted_at: new Date() },
+            { 
+              where: { user_id: user.id },
+              transaction 
+            }
+          );
+
+          // Soft delete the service provider
+          await ServiceProvider.update(
+            { 
+              status: 0, 
+              is_available: 0,
+              deleted_at: new Date() 
+            },
+            { 
+              where: { id: provider.id },
+              transaction 
+            }
+          );
+
+          console.log(`Service provider ${provider.id} soft deleted successfully`);
+        }
+
+        // Soft delete user account
+        await User.update(
+          { 
+            status: 0, 
+            notification: 0,
+            deleted_at: new Date() 
+          },
+          { 
+            where: { id: user.id },
+            transaction 
+          }
+        );
+
+        // Invalidate all tokens for this user (if token model exists)
+        try {
+          if (db.models.Token) {
+            await db.models.Token.update(
+              { 
+                is_active: 0, 
+                deleted_at: new Date() 
+              },
+              { 
+                where: { user_id: user.id },
+                transaction 
+            }
+            );
+          }
+        } catch (tokenError) {
+          console.log("Token invalidation skipped (Token model may not exist):", tokenError.message);
+        }
+
+        // Commit transaction
+        await transaction.commit();
+
+        // Log deletion for audit purposes
+        console.log(`Provider account deletion completed:`, {
+          user_id: user.id,
+          provider_id: provider?.id,
+          email: user.email,
+          phone: user.phone_number,
+          reason_id: reason_id,
+          deleted_at: new Date().toISOString()
+        });
+
+        return response.success("Your account has been deleted successfully", res, {
+          message: "Account deletion completed",
+          user_id: user.id,
+          provider_id: provider?.id,
+          deletion_timestamp: new Date().toISOString(),
+          note: "Your account has been soft deleted successfully."
+        });
+
+      } catch (transactionError) {
+        // Rollback transaction on error
+        await transaction.rollback();
+        console.error("Transaction error during account deletion:", transactionError);
+        throw transactionError;
+      }
+
     } catch (error) {
-      console.log(error);
-      return response.exception(
-        "An error occurred while deleting account",
-        res
-      );
+      console.error("Error deleting provider account:", error);
+      return response.exception("An error occurred while deleting your account", res);
     }
   }
 
