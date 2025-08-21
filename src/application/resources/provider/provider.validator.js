@@ -599,22 +599,70 @@ module.exports = class ProviderValidator {
    */
   async providerProfileAction(req, res, next) {
     console.log("ProviderValidator@providerProfileAction");
+    console.log("Request body in validator:", req.body);
+    console.log("Request params in validator:", req.params);
     try {
-      // Define validation schema for profile action
-      let schema = {
-        provider_id: joi.number().optional(),
-        approve: joi.number().valid(1, 2).default(1).required(),
+      // Validate provider_id from URL parameters
+      const providerIdSchema = joi.number().integer().min(1).required().messages({
+        'number.base': 'Provider ID must be a number',
+        'number.integer': 'Provider ID must be an integer',
+        'number.min': 'Provider ID must be greater than 0',
+        'any.required': 'Provider ID is required'
+      });
+
+      const providerIdErrors = await joiHelper.joiValidation({ provider_id: req.params.provider_id }, { provider_id: providerIdSchema });
+      if (providerIdErrors) {
+        return response.validationError("Invalid provider ID", res, {
+          error_code: 'INVALID_PROVIDER_ID',
+          details: providerIdErrors[0]
+        });
+      }
+
+      // Check if request body exists
+      if (!req.body || Object.keys(req.body).length === 0) {
+        return response.validationError("Request body is required", res, {
+          error_code: 'MISSING_REQUEST_BODY',
+          message: 'Request body must contain approval action'
+        });
+      }
+
+      // Define validation schema for request body (without provider_id)
+      let bodySchema = {
+        approve: joi.number().valid(1, 2).required().messages({
+          'number.base': 'Approval action must be a number',
+          'any.only': 'Approval action must be 1 (approve) or 2 (reject)',
+          'any.required': 'Approval action is required'
+        }),
         reason: joi.string().when("approve", {
           is: 2,
-          then: joi.string().required(),
-          otherwise: joi.string().optional(),
+          then: joi.string().min(10).max(1000).required().messages({
+            'string.empty': 'Rejection reason is required when rejecting a profile',
+            'string.min': 'Rejection reason must be at least 10 characters long',
+            'string.max': 'Rejection reason cannot exceed 1000 characters',
+            'any.required': 'Rejection reason is required when rejecting a profile'
+          }),
+          otherwise: joi.string().optional().allow(null, '')
         }),
       };
 
       // Validate request body against schema
-      let errors = await joiHelper.joiValidation(req.body, schema);
-      if (errors) {
-        return response.validationError("invalid request", res, errors[0]);
+      let bodyErrors = await joiHelper.joiValidation(req.body, bodySchema);
+      if (bodyErrors) {
+        return response.validationError("Validation failed", res, {
+          error_code: 'VALIDATION_ERROR',
+          details: bodyErrors[0]
+        });
+      }
+
+      // Additional validation: Check if provider exists
+      const db = require("../../../startup/model");
+      const provider = await db.models.ServiceProvider.findByPk(req.params.provider_id);
+      
+      if (!provider) {
+        return response.notFound("Provider not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider found with the specified ID'
+        });
       }
 
       next();

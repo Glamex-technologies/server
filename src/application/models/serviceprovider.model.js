@@ -71,6 +71,10 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: 0
     },
+    rejection_reason: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
     is_available: {
       type: DataTypes.TINYINT,
       allowNull: false,

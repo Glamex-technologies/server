@@ -386,7 +386,7 @@ module.exports = class ProviderController {
 
       // Check if profile is approved by admin (only if steps are completed)
       if (serviceProvider.step_completed === 6 && serviceProvider.is_approved !== 1) {
-        console.log(`🔍 Provider ${serviceProvider.id}: Steps complete but not approved by admin`);
+        console.log(`🔍 Provider ${serviceProvider.id}: Steps complete but approval status is ${serviceProvider.is_approved}`);
         
         // Generate token even for unapproved profiles so user can check status
         const userObj = {
@@ -397,11 +397,40 @@ module.exports = class ProviderController {
         };
 
         const accessToken = await genrateToken(userObj);
-        return response.validationError('Wait for the admin to verify your profile', res, {
-          access_token: accessToken,
-          approval_required: true,
-          message: 'Your profile is complete and under review by admin. You will be notified once approved.'
-        });
+        
+        // Handle different approval states
+        if (serviceProvider.is_approved === 0) {
+          // Pending approval
+          return response.validationError('Wait for the admin to verify your profile', res, {
+            access_token: accessToken,
+            approval_required: true,
+            approval_status: 'pending',
+            message: 'Your profile is complete and under review by admin. You will be notified once approved.'
+          });
+        } else if (serviceProvider.is_approved === 2) {
+          // Rejected
+          return response.validationError('Your profile has been rejected by admin', res, {
+            access_token: accessToken,
+            approval_required: true,
+            approval_status: 'rejected',
+            rejection_reason: serviceProvider.rejection_reason || 'No specific reason provided',
+            message: 'Your profile has been rejected. Please review the feedback and contact support if you have questions.',
+            next_steps: [
+              'Review the rejection reason provided',
+              'Address any issues mentioned in the feedback',
+              'Contact support for clarification if needed',
+              'You may reapply after addressing the concerns'
+            ]
+          });
+        } else {
+          // Unknown status
+          return response.validationError('Your profile approval status is unclear', res, {
+            access_token: accessToken,
+            approval_required: true,
+            approval_status: 'unknown',
+            message: 'There is an issue with your profile approval status. Please contact support.'
+          });
+        }
       }
 
       // All checks passed - generate token with user model data
@@ -1847,13 +1876,13 @@ module.exports = class ProviderController {
             total_reviews: provider.total_reviews,
             total_bookings: provider.total_bookings,
             total_customers: provider.total_customers,
-            is_approved: provider.is_approved,
-            is_available: provider.is_available,
-            step_completed: provider.step_completed,
-            fcm_token: provider.fcm_token,
-            subscription_id: provider.subscription_id,
-            subscription_expiry: provider.subscription_expiry,
-            admin_verified: provider.admin_verified,
+                          is_approved: provider.is_approved,
+              rejection_reason: provider.rejection_reason,
+              is_available: provider.is_available,
+              step_completed: provider.step_completed,
+              fcm_token: provider.fcm_token,
+              subscription_id: provider.subscription_id,
+              subscription_expiry: provider.subscription_expiry,
             created_at: provider.created_at,
             updated_at: provider.updated_at,
             // Related data
@@ -1893,38 +1922,122 @@ module.exports = class ProviderController {
    */
   async providerProfileAction(req, res) {
     console.log("ProviderController@providerProfileAction");
+    console.log("Request body:", req.body);
+    console.log("Request params:", req.params);
+    
+    // Check if request body exists and has required fields
+    if (!req.body || Object.keys(req.body).length === 0) {
+      return response.badRequest("Request body is required", res, {
+        error_code: 'MISSING_REQUEST_BODY',
+        message: 'Request body must contain approval action'
+      });
+    }
+    
     const data = req.body;
-    let serviceProvider = await providerResources.findOne({
-      id: data.provider_id,
-    });
-
-    if (!serviceProvider) {
-      return response.badRequest("Provider account not found", res, false);
+    const providerId = parseInt(req.params.provider_id);
+    
+    // Validate that approve field exists
+    if (!data.hasOwnProperty('approve')) {
+      return response.badRequest("Approval action is required", res, {
+        error_code: 'MISSING_APPROVAL_ACTION',
+        message: 'Request body must contain approve field (1 for approve, 2 for reject)'
+      });
     }
+    
+    try {
+      // Find the service provider by ID
+      const serviceProvider = await ServiceProvider.findByPk(providerId, {
+        include: [
+          {
+            model: User,
+            as: 'user',
+            attributes: ['id', 'first_name', 'last_name', 'full_name', 'email', 'phone_code', 'phone_number']
+          }
+        ]
+      });
 
-    let responseMessage = "Provider profile has been approved successfully";
-    if (data.approve == 2) {
-      responseMessage = "Provider profile has been rejected";
+      if (!serviceProvider) {
+        return response.notFound("Provider account not found", res, {
+          error_code: 'PROVIDER_NOT_FOUND',
+          message: 'No provider found with the specified ID'
+        });
+      }
+
+      // Validate approval action
+      if (![1, 2].includes(data.approve)) {
+        return response.badRequest("Invalid approval action. Use 1 for approve or 2 for reject", res, {
+          error_code: 'INVALID_APPROVAL_ACTION',
+          message: 'Approval action must be 1 (approve) or 2 (reject)'
+        });
+      }
+
+      // Validate rejection reason is provided when rejecting
+      if (data.approve === 2 && (!data.reason || data.reason.trim().length === 0)) {
+        return response.badRequest("Rejection reason is required when rejecting a provider profile", res, {
+          error_code: 'REJECTION_REASON_REQUIRED',
+          message: 'Please provide a reason for rejection'
+        });
+      }
+
+      // Prepare update data
+      const updateData = {
+        is_approved: data.approve
+      };
+
+      // Add rejection reason if rejecting
+      if (data.approve === 2) {
+        updateData.rejection_reason = data.reason.trim();
+      } else {
+        // Clear rejection reason when approving
+        updateData.rejection_reason = null;
+      }
+
+      // Update the service provider
+      await serviceProvider.update(updateData);
+
+      // Prepare response message
+      let responseMessage = "Provider profile has been approved successfully";
+      let statusMessage = "approved";
+      
+      if (data.approve === 2) {
+        responseMessage = "Provider profile has been rejected";
+        statusMessage = "rejected";
+      }
+
+      // Get updated provider data
+      const updatedProvider = await ServiceProvider.findByPk(providerId, {
+        include: [
+          {
+            model: User,
+            as: 'user',
+            attributes: ['id', 'first_name', 'last_name', 'full_name', 'email', 'phone_code', 'phone_number']
+          }
+        ]
+      });
+
+      const serviceProviderObj = {
+        id: updatedProvider.id,
+        user_id: updatedProvider.user_id,
+        first_name: updatedProvider.user.first_name,
+        last_name: updatedProvider.user.last_name,
+        full_name: updatedProvider.user.full_name,
+        email: updatedProvider.user.email,
+        phone_code: updatedProvider.user.phone_code,
+        phone_number: updatedProvider.user.phone_number,
+        provider_type: updatedProvider.provider_type,
+        salon_name: updatedProvider.salon_name,
+        step_completed: updatedProvider.step_completed,
+        is_approved: updatedProvider.is_approved,
+        rejection_reason: updatedProvider.rejection_reason,
+        status: statusMessage,
+        updated_at: updatedProvider.updated_at
+      };
+
+      return response.success(responseMessage, res, serviceProviderObj);
+    } catch (error) {
+      console.error("Error in providerProfileAction:", error);
+      return response.exception("An error occurred while processing the provider profile action", res);
     }
-
-    serviceProvider = await providerResources.updateProvider(
-      { admin_verified: data.approve },
-      { id: data.provider_id }
-    );
-
-    const serviceProviderObj = {
-      id: serviceProvider.id,
-      first_name: serviceProvider.first_name,
-      last_name: serviceProvider.last_name,
-      full_name: serviceProvider.full_name,
-      email: serviceProvider.email,
-      phone_code: serviceProvider.phone_code,
-      phone_number: serviceProvider.phone_number,
-      step_completed: serviceProvider.step_completed,
-      admin_verified: serviceProvider.admin_verified,
-    };
-
-    return response.success(responseMessage, res, serviceProviderObj);
   }
 
   /**
@@ -2158,6 +2271,7 @@ module.exports = class ProviderController {
         banner_image: basicProvider.banner_image,
         step_completed: basicProvider.step_completed,
         is_approved: basicProvider.is_approved,
+        rejection_reason: basicProvider.rejection_reason,
         is_available: basicProvider.is_available,
         overall_rating: basicProvider.overall_rating,
         total_reviews: basicProvider.total_reviews,
