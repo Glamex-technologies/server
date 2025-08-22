@@ -212,7 +212,10 @@ router.get(
 // PROVIDER PROFILE MANAGEMENT ROUTES
 // ========================================
 
-// Get provider profile (for authenticated providers)
+// Get provider user data only (for authenticated providers)
+router.get("/user", [providerAuth], providerController.getProviderUser);
+
+// Get service provider profile data only (for authenticated providers)
 router.get("/profile", [providerAuth], providerController.getProviderProfile);
 
 // Update provider profile

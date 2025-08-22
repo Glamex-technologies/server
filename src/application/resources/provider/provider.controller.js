@@ -4737,5 +4737,316 @@ module.exports = class ProviderController {
     }
   }
 
+  /**
+   * Get provider user data only (for authenticated providers)
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @returns {Object} JSON response with user data only
+   */
+  async getProviderUser(req, res) {
+    console.log("ProviderController@getProviderUser");
+    const user = req.user;
+
+    try {
+      // Return only user data
+      const userData = {
+        user: {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          is_verified: user.is_verified,
+          verified_at: user.verified_at,
+          profile_image: user.profile_image,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at
+        }
+      };
+      
+      return response.success("User data retrieved successfully", res, userData);
+    } catch (error) {
+      console.error("Error getting provider user data:", error);
+      return response.exception("Failed to retrieve user data", res);
+    }
+  }
+
+  /**
+   * Get provider user data only (for authenticated providers)
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @returns {Object} JSON response with user data only
+   */
+  async getProviderUser(req, res) {
+    console.log("ProviderController@getProviderUser");
+    const user = req.user;
+
+    try {
+      // Return only user data
+      const userData = {
+        user: {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          is_verified: user.is_verified,
+          verified_at: user.verified_at,
+          profile_image: user.profile_image,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at
+        }
+      };
+      
+      return response.success("User data retrieved successfully", res, userData);
+    } catch (error) {
+      console.error("Error getting provider user data:", error);
+      return response.exception("Failed to retrieve user data", res);
+    }
+  }
+
+  /**
+   * Get service provider profile data only (for authenticated providers)
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @returns {Object} JSON response with service provider data only
+   */
+  async getProviderProfile(req, res) {
+    console.log("ProviderController@getProviderProfile");
+    const provider = req.provider;
+    const user = req.user;
+
+    try {
+      // If no provider record exists, return error
+      if (!provider) {
+        return response.notFound("Provider profile not found. Please complete your provider profile setup first.", res, {
+          profile_required: true,
+          message: "Please complete your provider profile setup"
+        });
+      }
+
+      // Get basic provider details first (without includes to avoid association errors)
+      const basicProvider = await ServiceProvider.findByPk(provider.id);
+      
+      if (!basicProvider) {
+        return response.notFound("Provider profile not found", res);
+      }
+
+      // Get address details separately (if exists)
+      let addressDetails = null;
+      try {
+        const address = await ServiceProviderAddress.findOne({
+          where: { user_id: user.id },
+          include: [
+            {
+              model: db.models.Country,
+              as: "country",
+              attributes: ["id", "name"],
+            },
+            {
+              model: db.models.City,
+              as: "city",
+              attributes: ["id", "name"],
+            },
+          ],
+        });
+        
+        if (address) {
+          addressDetails = {
+            id: address.id,
+            address: address.address,
+            latitude: address.latitude,
+            longitude: address.longitude,
+            country_id: address.country_id,
+            city_id: address.city_id,
+            country: address.country ? {
+              id: address.country.id,
+              name: address.country.name
+            } : null,
+            city: address.city ? {
+              id: address.city.id,
+              name: address.city.name
+            } : null
+          };
+        }
+      } catch (addressError) {
+        console.log("Address not found or error:", addressError.message);
+        addressDetails = null;
+      }
+
+      // Get bank details separately (if exists)
+      let bankDetails = [];
+      try {
+        const bankDetailsData = await BankDetails.findAll({
+          where: { service_provider_id: provider.id },
+          attributes: [
+            "id",
+            "bank_name",
+            "account_holder_name",
+            "iban"
+          ],
+        });
+        
+        bankDetails = bankDetailsData.map(bank => ({
+          id: bank.id,
+          bank_name: bank.bank_name,
+          account_holder_name: bank.account_holder_name,
+          iban: bank.iban
+        }));
+      } catch (bankError) {
+        console.log("Bank details not found or error:", bankError.message);
+        bankDetails = [];
+      }
+
+      // Get availability separately (if exists)
+      let availability = [];
+      try {
+        const availabilityData = await ServiceProviderAvailability.findAll({
+          where: { service_provider_id: provider.id },
+          attributes: [
+            "id",
+            "day",
+            "from_time",
+            "to_time",
+            "available"
+          ],
+        });
+        
+        availability = availabilityData.map(avail => ({
+          id: avail.id,
+          day: avail.day,
+          from_time: avail.from_time,
+          to_time: avail.to_time,
+          available: avail.available
+        }));
+      } catch (availabilityError) {
+        console.log("Availability not found or error:", availabilityError.message);
+        availability = [];
+      }
+
+      // Get services separately (if exists)
+      let services = [];
+      try {
+        const servicesData = await ServiceList.findAll({
+          where: { service_provider_id: provider.id },
+          include: [
+            {
+              model: db.models.Category,
+              as: 'category',
+              attributes: ['id', 'title', 'image']
+            },
+            {
+              model: db.models.subcategory,
+              as: 'subcategory',
+              attributes: ['id', 'title', 'image']
+            },
+            {
+              model: db.models.ServiceLocation,
+              as: 'location',
+              attributes: ['id', 'title', 'description']
+            }
+          ],
+          order: [['created_at', 'DESC']]
+        });
+        
+        services = servicesData.map(service => ({
+          id: service.id,
+          title: service.title,
+          service_id: service.service_id,
+          category_id: service.category_id,
+          sub_category_id: service.sub_category_id,
+          price: service.price,
+          description: service.description,
+          service_image: service.service_image,
+          service_location: service.service_location,
+          is_sub_service: service.is_sub_service,
+          have_offers: service.have_offers,
+          status: service.status,
+          category: service.category,
+          subcategory: service.subcategory,
+          location: service.location
+        }));
+      } catch (servicesError) {
+        console.log("Services not found or error:", servicesError.message);
+        services = [];
+      }
+
+      // Get gallery separately (if exists)
+      let gallery = [];
+      try {
+        const galleryData = await db.models.Gallery.findAll({
+          where: { provider_id: provider.id },
+          attributes: ["id", "image", "status", "type"],
+        });
+        
+        gallery = galleryData.map(img => ({
+          id: img.id,
+          image: img.image,
+          status: img.status,
+          type: img.type
+        }));
+      } catch (galleryError) {
+        console.log("Gallery not found or error:", galleryError.message);
+        gallery = [];
+      }
+
+      // Transform the data into the required format - only service provider data
+      const profileData = {
+        // Basic Provider Info
+        id: basicProvider.id,
+        user_id: basicProvider.user_id,
+        provider_type: basicProvider.provider_type,
+        salon_name: basicProvider.salon_name,
+        description: basicProvider.description,
+        banner_image: basicProvider.banner_image,
+        step_completed: basicProvider.step_completed,
+        is_approved: basicProvider.is_approved,
+        rejection_reason: basicProvider.rejection_reason,
+        is_available: basicProvider.is_available,
+        overall_rating: basicProvider.overall_rating,
+        total_reviews: basicProvider.total_reviews,
+        total_bookings: basicProvider.total_bookings,
+        total_customers: basicProvider.total_customers,
+        notification: basicProvider.notification,
+        subscription_expiry: basicProvider.subscription_expiry,
+        
+        // Documents
+        national_id_image_url: basicProvider.national_id_image_url,
+        freelance_certificate_image_url: basicProvider.freelance_certificate_image_url,
+        commercial_registration_image_url: basicProvider.commercial_registration_image_url,
+        
+        // Address Info
+        address: addressDetails,
+        
+        // Bank Details
+        bank_details: bankDetails,
+        
+        // Availability
+        availability: availability,
+        
+        // Services
+        services: services,
+        
+        // Gallery
+        gallery: gallery
+      };
+
+      return response.success("Service provider profile retrieved successfully", res, profileData);
+    } catch (error) {
+      console.error("Error getting service provider profile:", error);
+      return response.exception("Failed to retrieve service provider profile", res);
+    }
+  }
+
 }
 
