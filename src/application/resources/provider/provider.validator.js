@@ -997,10 +997,8 @@ module.exports = class ProviderValidator {
         return response.validationError("Please complete Step 1 (Subscription Payment) first", res, false);
       }
 
-      // Check if step 2 is already completed
-      if (serviceProvider.step_completed >= 2) {
-        return response.validationError("Step 2 (Provider Type) is already completed", res, false);
-      }
+      // Allow updates to provider type even if step is already completed
+      // This enables users to change their provider type as needed
 
       next();
     } catch (err) {
