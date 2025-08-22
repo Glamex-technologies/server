@@ -98,8 +98,6 @@ module.exports = class UserController {
       verified_at: user.verified_at,
       status: user.status,
       notification: user.notification,
-      created_at: user.created_at,
-      updated_at: user.updated_at,
     };
 
     return response.success("Account created successfully! Please verify your phone number with the OTP sent to your registered mobile number.", res, result);
@@ -167,29 +165,9 @@ module.exports = class UserController {
       if (!verificationResult.success) {
         // Enhanced error handling with specific status codes
         if (verificationResult.message === 'OTP not found or expired') {
-          // For login OTP, if not found, try to create a new one and suggest resending
-          if (data.otp_type === 'login') {
-            console.log("Login OTP not found, creating a new one...");
-            try {
-              const newOtpRecord = await OtpVerification.createForEntity(
-                "user",
-                user.id,
-                user.phone_code + user.phone_number,
-                "login"
-              );
-              console.log("New login OTP created:", {
-                otp_code: newOtpRecord.otp_code,
-                expires_at: newOtpRecord.expires_at,
-              });
-            } catch (error) {
-              console.error("Error creating new login OTP:", error);
-            }
-          }
-          
           return response.unauthorized("OTP has expired or is invalid", res, {
             error_code: 'OTP_EXPIRED',
-            message: 'The OTP has expired or is invalid. Please request a new one.',
-            suggestion: data.otp_type === 'login' ? 'A new OTP has been sent to your phone number.' : null
+            message: 'The OTP has expired or is invalid. Please request a new one using the resend OTP functionality.'
           });
         } else if (verificationResult.message === 'Too many failed attempts') {
           return response.forbidden("Too many failed OTP attempts", res, {
