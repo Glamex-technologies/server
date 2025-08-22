@@ -103,10 +103,12 @@ module.exports = class ProviderController {
         verified_at: user.verified_at,
         is_verified: user.is_verified,
         user_type: user.user_type,
+        status: user.status,
+        notification: user.notification,
       };
 
       return response.success(
-        "Registration successful. Please verify your account with the OTP sent to your phone.",
+        "Account created successfully! Please verify your phone number with the OTP sent to your registered mobile number.",
         res,
         result
       );
@@ -117,13 +119,21 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Verify provider's OTP to complete registration
+   * Unified OTP verification method for all OTP types
    */
-  async verifyVerificationOtp(req, res) {
-    console.log("ProviderController@verifyVerificationOtp");
+  async verifyOtp(req, res) {
+    console.log("ProviderController@verifyOtp");
     const data = req.body;
 
     try {
+      // Validate otp_type
+      if (!data.otp_type || !['signup', 'login', 'forgot_password'].includes(data.otp_type)) {
+        return response.badRequest("Invalid otp_type. Must be one of: signup, login, forgot_password", res, {
+          error_code: 'INVALID_OTP_TYPE',
+          message: 'Please provide a valid OTP type'
+        });
+      }
+
       // Find user by phone number combination
       const user = await User.findOne({
         where: {
@@ -140,19 +150,57 @@ module.exports = class ProviderController {
         });
       }
 
+      // Map otp_type to purpose
+      const purposeMap = {
+        'signup': 'registration',
+        'login': 'login',
+        'forgot_password': 'password_reset'
+      };
+      
+      const purpose = purposeMap[data.otp_type];
+
+      console.log("Attempting to verify OTP:", {
+        entity_type: "provider",
+        entity_id: user.id,
+        otp: String(data.otp),
+        purpose: purpose
+      });
+
       const verificationResult = await OtpVerification.verifyForEntity(
         "provider",
         user.id,
         String(data.otp),
-        "registration"
+        purpose
       );
+
+      console.log("OTP verification result:", verificationResult);
 
       if (!verificationResult.success) {
         // Enhanced error handling with specific status codes
         if (verificationResult.message === 'OTP not found or expired') {
+          // For login OTP, if not found, try to create a new one and suggest resending
+          if (data.otp_type === 'login') {
+            console.log("Login OTP not found, creating a new one...");
+            try {
+              const newOtpRecord = await OtpVerification.createForEntity(
+                "provider",
+                user.id,
+                user.phone_code + user.phone_number,
+                "login"
+              );
+              console.log("New login OTP created:", {
+                otp_code: newOtpRecord.otp_code,
+                expires_at: newOtpRecord.expires_at,
+              });
+            } catch (error) {
+              console.error("Error creating new login OTP:", error);
+            }
+          }
+          
           return response.unauthorized("OTP has expired or is invalid", res, {
             error_code: 'OTP_EXPIRED',
-            message: 'The OTP has expired or is invalid. Please request a new one.'
+            message: 'The OTP has expired or is invalid. Please request a new one.',
+            suggestion: data.otp_type === 'login' ? 'A new OTP has been sent to your phone number.' : null
           });
         } else if (verificationResult.message === 'Too many failed attempts') {
           return response.forbidden("Too many failed OTP attempts", res, {
@@ -167,46 +215,148 @@ module.exports = class ProviderController {
         }
       }
 
-      // Update user verification status and ensure user is active
-      await user.update({
-        verified_at: new Date(),
-        is_verified: 1,
-        status: 1, // Ensure user account is active
-      });
+      // Handle different OTP types
+      if (data.otp_type === 'signup') {
+        // Update user verification status and ensure user is active
+        await user.update({
+          verified_at: new Date(),
+          is_verified: 1,
+          status: 1, // Ensure user account is active
+        });
 
-      const userObj = {
-        user_id: user.id,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        full_name: user.full_name,
-        email: user.email,
-        phone_code: user.phone_code, 
-        phone_number: user.phone_number,
-        verified_at: user.verified_at,
-      };
+        const userObj = {
+          user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code, 
+          phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+        };
 
-      // Generate token for user (no provider profile yet)
-      const accessToken = await genrateToken({
-        user_id: user.id,
-        phone_code: user.phone_code,
-        phone_number: user.phone_number,
-        userType: "provider",
-      });
-      
-      const result = {
-        access_token: accessToken,
-        user: userObj,
-      };
+        // Generate token for user (no provider profile yet)
+        const accessToken = await genrateToken({
+          user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+          userType: "provider",
+        });
+        
+        const result = {
+          access_token: accessToken,
+          user: userObj,
+        };
 
-      return response.success(
-        "Account verification successful. You can now create your provider profile.",
-        res,
-        result
-      );
+        return response.success(
+          "Account verification successful. You can now create your provider profile.",
+          res,
+          result
+        );
+      } else if (data.otp_type === 'login') {
+        // For login OTP verification, also verify the user account if not already verified
+        if (!user.is_verified) {
+          await user.update({
+            verified_at: new Date(),
+            is_verified: 1,
+            status: 1, // Ensure user account is active
+          });
+        }
+
+        const userObj = {
+          user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code, 
+          phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+        };
+
+        // Generate token for user
+        const accessToken = await genrateToken({
+          user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+          userType: "provider",
+        });
+        
+        const result = {
+          access_token: accessToken,
+          user: userObj,
+        };
+
+        return response.success(
+          "Login OTP verified successfully. You can now proceed with login.",
+          res,
+          result
+        );
+      } else if (data.otp_type === 'forgot_password') {
+        // For forgot password OTP verification, just return success
+        const result = {
+          user_id: user.id,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+        };
+
+        return response.success(
+          "Password reset OTP verified successfully. You can now reset your password.",
+          res,
+          result
+        );
+      }
     } catch (error) {
       console.error("Error in OTP verification:", error);
       return response.exception("Internal server error", res);
     }
+  }
+
+  /**
+   * Verify provider's OTP to complete registration (legacy method - redirects to verifyOtp)
+   */
+  async verifyVerificationOtp(req, res) {
+    // Redirect to the new unified verifyOtp method
+    req.body.otp_type = 'signup';
+    return this.verifyOtp(req, res);
   }
 
   /**
@@ -217,6 +367,14 @@ module.exports = class ProviderController {
     const data = req.body;
 
     try {
+      // Validate otp_type
+      if (!data.otp_type || !['signup', 'login', 'forgot_password'].includes(data.otp_type)) {
+        return response.badRequest("Invalid otp_type. Must be one of: signup, login, forgot_password", res, {
+          error_code: 'INVALID_OTP_TYPE',
+          message: 'Please provide a valid OTP type'
+        });
+      }
+
       // Find user by phone number combination
       const user = await User.findOne({
         where: {
@@ -233,13 +391,22 @@ module.exports = class ProviderController {
         });
       }
 
+      // Map otp_type to purpose
+      const purposeMap = {
+        'signup': 'registration',
+        'login': 'login',
+        'forgot_password': 'password_reset'
+      };
+      
+      const purpose = purposeMap[data.otp_type];
+
       // Check rate limiting for OTP requests
       try {
         const recentOtps = await OtpVerification.count({
           where: {
             entity_type: 'provider',
             entity_id: user.id,
-            purpose: 'registration',
+            purpose: purpose,
             created_at: {
               [Op.gte]: new Date(Date.now() - 60 * 60 * 1000) // Last 1 hour
             }
@@ -263,11 +430,12 @@ module.exports = class ProviderController {
           "provider",
           user.id,
           user.phone_code + user.phone_number,
-          "registration"
+          purpose
         );
         console.log("Provider user resend OTP created:", {
           otp_code: otpRecord.otp_code,
           expires_at: otpRecord.expires_at,
+          purpose: purpose
         });
       } catch (error) {
         console.error("Error creating resend OTP:", error);
@@ -280,6 +448,7 @@ module.exports = class ProviderController {
         last_name: user.last_name,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
+        otp_type: data.otp_type
       };
 
       return response.created(
@@ -314,25 +483,40 @@ module.exports = class ProviderController {
 
       // Check if user is verified
       if (!user.is_verified) {
-        // Generate OTP and set it in database (hardcoded as 1111 for now)
-        try {
-          const otpRecord = await OtpVerification.createForEntity(
-            "provider",
-            user.id,
-            user.phone_code + user.phone_number,
-            "registration"
-          );
-          console.log("Provider User OTP created for unverified user:", {
-            otp_code: otpRecord.otp_code,
-            expires_at: otpRecord.expires_at,
+        // Check if there's already a valid login OTP
+        const existingLoginOtp = await OtpVerification.findValidForEntity(
+          "provider",
+          user.id,
+          "login"
+        );
+
+        if (!existingLoginOtp) {
+          // Generate new login OTP if none exists
+          try {
+            const otpRecord = await OtpVerification.createForEntity(
+              "provider",
+              user.id,
+              user.phone_code + user.phone_number,
+              "login"
+            );
+            console.log("Provider User login OTP created for unverified user:", {
+              otp_code: otpRecord.otp_code,
+              expires_at: otpRecord.expires_at,
+            });
+          } catch (error) {
+            console.error("Error creating provider user OTP:", error);
+          }
+        } else {
+          console.log("Existing login OTP found for unverified user:", {
+            otp_code: existingLoginOtp.otp_code,
+            expires_at: existingLoginOtp.expires_at,
           });
-        } catch (error) {
-          console.error("Error creating provider user OTP:", error);
         }
 
         return response.validationError('Please verify your account first', res, {
           verification_required: true,
-          message: 'Your account needs to be verified before you can login'
+          otp_type: 'login', // Specify the OTP type for frontend
+          message: 'Your account needs to be verified before you can login. OTP has been sent to your registered mobile number for verification.'
         });
       }
 
@@ -345,8 +529,20 @@ module.exports = class ProviderController {
         // Generate token with user data and let them create profile
         const userObj = {
           user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
           phone_code: user.phone_code,
           phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
           userType: "provider",
         };
 
@@ -361,7 +557,14 @@ module.exports = class ProviderController {
             email: user.email,
             phone_code: user.phone_code,
             phone_number: user.phone_number,
+            gender: user.gender,
             verified_at: user.verified_at,
+            is_verified: user.is_verified,
+            user_type: user.user_type,
+            status: user.status,
+            notification: user.notification,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
           },
           profile_required: true,
           message: 'Please create your provider profile to continue'
@@ -377,8 +580,20 @@ module.exports = class ProviderController {
         // Generate token even for incomplete steps so user can complete them
         const userObj = {
           user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
           phone_code: user.phone_code,
           phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
           userType: "provider",
         };
 
@@ -399,8 +614,20 @@ module.exports = class ProviderController {
         // Generate token even for unapproved profiles so user can check status
         const userObj = {
           user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
           phone_code: user.phone_code,
           phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
           userType: "provider",
         };
 
@@ -444,8 +671,20 @@ module.exports = class ProviderController {
       // All checks passed - generate token with user model data
       const userObj = {
         user_id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        email: user.email,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
+        gender: user.gender,
+        verified_at: user.verified_at,
+        is_verified: user.is_verified,
+        user_type: user.user_type,
+        status: user.status,
+        notification: user.notification,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
         userType: "provider",
       };
 
@@ -466,6 +705,7 @@ module.exports = class ProviderController {
           email: user.email,
           phone_code: user.phone_code,
           phone_number: user.phone_number,
+          gender: user.gender,
           provider_type: serviceProvider.provider_type,
           salon_name: serviceProvider.salon_name,
           description: serviceProvider.description,
@@ -476,8 +716,13 @@ module.exports = class ProviderController {
           city_id: serviceProviderAddress?.city_id || null,
           step_completed: serviceProvider.step_completed,
           verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
           is_approved: serviceProvider.is_approved,
           status: serviceProvider.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
         },
       };
 
@@ -537,69 +782,7 @@ module.exports = class ProviderController {
     );
   }
 
-  /**
-   * Verify OTP for password reset
-   */
-  async verifyForgotPasswordOtp(req, res) {
-    console.log("ProviderController@verifyForgotPasswordOtp");
-    const data = req.body;
-    
-    // Find user by phone number combination
-    const user = await User.findOne({
-      where: {
-        phone_code: data.phone_code,
-        phone_number: data.phone_number,
-        user_type: "provider"
-      }
-    });
 
-    if (!user) {
-      return response.notFound("Provider user account not found", res, {
-        error_code: 'PROVIDER_NOT_FOUND',
-        message: 'No provider account found with this phone number'
-      });
-    }
-
-    // Verify OTP against user (not serviceProvider)
-    const verificationResult = await OtpVerification.verifyForEntity(
-      "provider",
-      user.id, // Use user.id instead of serviceProvider.id
-      String(data.otp),
-      "password_reset"
-    );
-
-    if (!verificationResult.success) {
-      // Enhanced error handling with specific status codes
-      if (verificationResult.message === 'OTP not found or expired') {
-        return response.unauthorized("OTP has expired or is invalid", res, {
-          error_code: 'OTP_EXPIRED',
-          message: 'The OTP has expired or is invalid. Please request a new one.'
-        });
-      } else if (verificationResult.message === 'Too many failed attempts') {
-        return response.forbidden("Too many failed OTP attempts", res, {
-          error_code: 'TOO_MANY_ATTEMPTS',
-          message: 'Too many failed attempts. Please request a new OTP.'
-        });
-      } else {
-        return response.unauthorized("Invalid OTP", res, {
-          error_code: 'INVALID_OTP',
-          message: 'The OTP you entered is incorrect.'
-        });
-      }
-    }
-
-    const result = {
-      user_id: user.id,
-      phone_code: user.phone_code,
-      phone_number: user.phone_number,
-    };
-
-    return response.success(
-      "OTP verified successfully. You can now reset your password.",
-      res,
-      result
-    );
-  }
 
   /**
    * Reset provider's password after OTP verification
@@ -4551,6 +4734,317 @@ module.exports = class ProviderController {
     } catch (error) {
       console.error("Error getting complete onboarding data:", error);
       return response.exception("Failed to retrieve complete onboarding data", res);
+    }
+  }
+
+  /**
+   * Get provider user data only (for authenticated providers)
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @returns {Object} JSON response with user data only
+   */
+  async getProviderUser(req, res) {
+    console.log("ProviderController@getProviderUser");
+    const user = req.user;
+
+    try {
+      // Return only user data
+      const userData = {
+        user: {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          is_verified: user.is_verified,
+          verified_at: user.verified_at,
+          profile_image: user.profile_image,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at
+        }
+      };
+      
+      return response.success("User data retrieved successfully", res, userData);
+    } catch (error) {
+      console.error("Error getting provider user data:", error);
+      return response.exception("Failed to retrieve user data", res);
+    }
+  }
+
+  /**
+   * Get provider user data only (for authenticated providers)
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @returns {Object} JSON response with user data only
+   */
+  async getProviderUser(req, res) {
+    console.log("ProviderController@getProviderUser");
+    const user = req.user;
+
+    try {
+      // Return only user data
+      const userData = {
+        user: {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          is_verified: user.is_verified,
+          verified_at: user.verified_at,
+          profile_image: user.profile_image,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at
+        }
+      };
+      
+      return response.success("User data retrieved successfully", res, userData);
+    } catch (error) {
+      console.error("Error getting provider user data:", error);
+      return response.exception("Failed to retrieve user data", res);
+    }
+  }
+
+  /**
+   * Get service provider profile data only (for authenticated providers)
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @returns {Object} JSON response with service provider data only
+   */
+  async getProviderProfile(req, res) {
+    console.log("ProviderController@getProviderProfile");
+    const provider = req.provider;
+    const user = req.user;
+
+    try {
+      // If no provider record exists, return error
+      if (!provider) {
+        return response.notFound("Provider profile not found. Please complete your provider profile setup first.", res, {
+          profile_required: true,
+          message: "Please complete your provider profile setup"
+        });
+      }
+
+      // Get basic provider details first (without includes to avoid association errors)
+      const basicProvider = await ServiceProvider.findByPk(provider.id);
+      
+      if (!basicProvider) {
+        return response.notFound("Provider profile not found", res);
+      }
+
+      // Get address details separately (if exists)
+      let addressDetails = null;
+      try {
+        const address = await ServiceProviderAddress.findOne({
+          where: { user_id: user.id },
+          include: [
+            {
+              model: db.models.Country,
+              as: "country",
+              attributes: ["id", "name"],
+            },
+            {
+              model: db.models.City,
+              as: "city",
+              attributes: ["id", "name"],
+            },
+          ],
+        });
+        
+        if (address) {
+          addressDetails = {
+            id: address.id,
+            address: address.address,
+            latitude: address.latitude,
+            longitude: address.longitude,
+            country_id: address.country_id,
+            city_id: address.city_id,
+            country: address.country ? {
+              id: address.country.id,
+              name: address.country.name
+            } : null,
+            city: address.city ? {
+              id: address.city.id,
+              name: address.city.name
+            } : null
+          };
+        }
+      } catch (addressError) {
+        console.log("Address not found or error:", addressError.message);
+        addressDetails = null;
+      }
+
+      // Get bank details separately (if exists)
+      let bankDetails = [];
+      try {
+        const bankDetailsData = await BankDetails.findAll({
+          where: { service_provider_id: provider.id },
+          attributes: [
+            "id",
+            "bank_name",
+            "account_holder_name",
+            "iban"
+          ],
+        });
+        
+        bankDetails = bankDetailsData.map(bank => ({
+          id: bank.id,
+          bank_name: bank.bank_name,
+          account_holder_name: bank.account_holder_name,
+          iban: bank.iban
+        }));
+      } catch (bankError) {
+        console.log("Bank details not found or error:", bankError.message);
+        bankDetails = [];
+      }
+
+      // Get availability separately (if exists)
+      let availability = [];
+      try {
+        const availabilityData = await ServiceProviderAvailability.findAll({
+          where: { service_provider_id: provider.id },
+          attributes: [
+            "id",
+            "day",
+            "from_time",
+            "to_time",
+            "available"
+          ],
+        });
+        
+        availability = availabilityData.map(avail => ({
+          id: avail.id,
+          day: avail.day,
+          from_time: avail.from_time,
+          to_time: avail.to_time,
+          available: avail.available
+        }));
+      } catch (availabilityError) {
+        console.log("Availability not found or error:", availabilityError.message);
+        availability = [];
+      }
+
+      // Get services separately (if exists)
+      let services = [];
+      try {
+        const servicesData = await ServiceList.findAll({
+          where: { service_provider_id: provider.id },
+          include: [
+            {
+              model: db.models.Category,
+              as: 'category',
+              attributes: ['id', 'title', 'image']
+            },
+            {
+              model: db.models.subcategory,
+              as: 'subcategory',
+              attributes: ['id', 'title', 'image']
+            },
+            {
+              model: db.models.ServiceLocation,
+              as: 'location',
+              attributes: ['id', 'title', 'description']
+            }
+          ],
+          order: [['created_at', 'DESC']]
+        });
+        
+        services = servicesData.map(service => ({
+          id: service.id,
+          title: service.title,
+          service_id: service.service_id,
+          category_id: service.category_id,
+          sub_category_id: service.sub_category_id,
+          price: service.price,
+          description: service.description,
+          service_image: service.service_image,
+          service_location: service.service_location,
+          is_sub_service: service.is_sub_service,
+          have_offers: service.have_offers,
+          status: service.status,
+          category: service.category,
+          subcategory: service.subcategory,
+          location: service.location
+        }));
+      } catch (servicesError) {
+        console.log("Services not found or error:", servicesError.message);
+        services = [];
+      }
+
+      // Get gallery separately (if exists)
+      let gallery = [];
+      try {
+        const galleryData = await db.models.Gallery.findAll({
+          where: { provider_id: provider.id },
+          attributes: ["id", "image", "status", "type"],
+        });
+        
+        gallery = galleryData.map(img => ({
+          id: img.id,
+          image: img.image,
+          status: img.status,
+          type: img.type
+        }));
+      } catch (galleryError) {
+        console.log("Gallery not found or error:", galleryError.message);
+        gallery = [];
+      }
+
+      // Transform the data into the required format - only service provider data
+      const profileData = {
+        // Basic Provider Info
+        id: basicProvider.id,
+        user_id: basicProvider.user_id,
+        provider_type: basicProvider.provider_type,
+        salon_name: basicProvider.salon_name,
+        description: basicProvider.description,
+        banner_image: basicProvider.banner_image,
+        step_completed: basicProvider.step_completed,
+        is_approved: basicProvider.is_approved,
+        rejection_reason: basicProvider.rejection_reason,
+        is_available: basicProvider.is_available,
+        overall_rating: basicProvider.overall_rating,
+        total_reviews: basicProvider.total_reviews,
+        total_bookings: basicProvider.total_bookings,
+        total_customers: basicProvider.total_customers,
+        notification: basicProvider.notification,
+        subscription_expiry: basicProvider.subscription_expiry,
+        
+        // Documents
+        national_id_image_url: basicProvider.national_id_image_url,
+        freelance_certificate_image_url: basicProvider.freelance_certificate_image_url,
+        commercial_registration_image_url: basicProvider.commercial_registration_image_url,
+        
+        // Address Info
+        address: addressDetails,
+        
+        // Bank Details
+        bank_details: bankDetails,
+        
+        // Availability
+        availability: availability,
+        
+        // Services
+        services: services,
+        
+        // Gallery
+        gallery: gallery
+      };
+
+      return response.success("Service provider profile retrieved successfully", res, profileData);
+    } catch (error) {
+      console.error("Error getting service provider profile:", error);
+      return response.exception("Failed to retrieve service provider profile", res);
     }
   }
 

@@ -149,7 +149,53 @@ module.exports = class ProviderValidator {
   }
 
   /**
-   * Validates OTP verification request
+   * Validates unified OTP verification request
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware function
+   */
+  async verifyOtp(req, res, next) {
+    console.log("ProviderValidator@verifyOtp");
+    try {
+      // Define validation schema for OTP verification
+      let schema = {
+        phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
+          'string.pattern.base': 'Phone code must be 1-4 digits',
+          'any.required': 'Phone code is required'
+        }),
+        phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
+          'string.pattern.base': 'Phone number must be 6-15 digits',
+          'any.required': 'Phone number is required'
+        }),
+        otp: joi.string().length(4).pattern(/^\d+$/).required().messages({
+          'string.length': 'OTP must be exactly 4 digits',
+          'string.pattern.base': 'OTP must contain only digits',
+          'any.required': 'OTP is required'
+        }),
+        otp_type: joi.string().valid('signup', 'login', 'forgot_password').required().messages({
+          'string.valid': 'OTP type must be one of: signup, login, forgot_password',
+          'any.required': 'OTP type is required'
+        }),
+      };
+
+      // Validate request body against schema
+      let errors = await joiHelper.joiValidation(req.body, schema);
+      if (errors) {
+        return response.validationError("Validation failed", res, {
+          error_code: 'VALIDATION_ERROR',
+          details: errors[0]
+        });
+      }
+
+      next();
+    } catch (err) {
+      console.error("Validation Error: ", err);
+      return response.exception("Server error occurred", res);
+    }
+  }
+
+  /**
+   * Validates OTP verification request (legacy method)
    * @param {Object} req - Express request object
    * @param {Object} res - Express response object
    * @param {Function} next - Express next middleware function
@@ -208,6 +254,10 @@ module.exports = class ProviderValidator {
         phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
           'string.pattern.base': 'Phone number must be 6-15 digits',
           'any.required': 'Phone number is required'
+        }),
+        otp_type: joi.string().valid('signup', 'login', 'forgot_password').required().messages({
+          'string.valid': 'OTP type must be one of: signup, login, forgot_password',
+          'any.required': 'OTP type is required'
         }),
       };
 
@@ -441,47 +491,7 @@ module.exports = class ProviderValidator {
     }
   }
 
-  /**
-   * Validates forgot password OTP verification request
-   * @param {Object} req - Express request object
-   * @param {Object} res - Express response object
-   * @param {Function} next - Express next middleware function
-   */
-  async verifyForgotPasswordOtp(req, res, next) {
-    console.log("ProviderValidator@verifyForgotPasswordOtp");
-    try {
-      // Define validation schema for forgot password OTP verification
-      let schema = {
-        phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
-          'string.pattern.base': 'Phone code must be 1-4 digits',
-          'any.required': 'Phone code is required'
-        }),
-        phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
-          'string.pattern.base': 'Phone number must be 6-15 digits',
-          'any.required': 'Phone number is required'
-        }),
-        otp: joi.string().length(4).pattern(/^\d+$/).required().messages({
-          'string.length': 'OTP must be exactly 4 digits',
-          'string.pattern.base': 'OTP must contain only digits',
-          'any.required': 'OTP is required'
-        }),
-      };
 
-      // Validate request body against schema
-      let errors = await joiHelper.joiValidation(req.body, schema);
-      if (errors) {
-        return response.validationError("Validation failed", res, {
-          error_code: 'VALIDATION_ERROR',
-          details: errors[0]
-        });
-      }
-
-      next();
-    } catch (err) {
-      console.error("Validation Error: ", err);
-      return response.exception("Server error occurred", res);
-    }
-  }
 
   /**
    * Validates password reset request

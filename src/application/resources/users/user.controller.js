@@ -95,17 +95,30 @@ module.exports = class UserController {
       country_id: userAddress?.country_id || null,
       city_id: userAddress?.city_id || null,
       is_verified: user.is_verified,
+      verified_at: user.verified_at,
+      status: user.status,
+      notification: user.notification,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
     };
 
-    return response.success("User registered successfully", res, result);
+    return response.success("Account created successfully! Please verify your phone number with the OTP sent to your registered mobile number.", res, result);
   }
 
-  // Verify OTP for registration
-  async verifyVerificationOtp(req, res) {
+  // Unified OTP verification method for all OTP types
+  async verifyOtp(req, res) {
     try {
-      console.log("UserController@verifyVerificationOtp");
+      console.log("UserController@verifyOtp");
       const data = req.body;
       console.log("Verification request data:", data);
+
+      // Validate otp_type
+      if (!data.otp_type || !['signup', 'login', 'forgot_password'].includes(data.otp_type)) {
+        return response.badRequest("Invalid otp_type. Must be one of: signup, login, forgot_password", res, {
+          error_code: 'INVALID_OTP_TYPE',
+          message: 'Please provide a valid OTP type'
+        });
+      }
 
       // Find user by phone number combination
       let user = await userResources.findOne({ 
@@ -125,20 +138,58 @@ module.exports = class UserController {
         is_verified: user.is_verified,
       });
 
+      // Map otp_type to purpose
+      const purposeMap = {
+        'signup': 'registration',
+        'login': 'login',
+        'forgot_password': 'password_reset'
+      };
+      
+      const purpose = purposeMap[data.otp_type];
+
+      console.log("Attempting to verify OTP:", {
+        entity_type: "user",
+        entity_id: user.id,
+        otp: String(data.otp),
+        purpose: purpose
+      });
+
       // Verify OTP using the new system
       const verificationResult = await OtpVerification.verifyForEntity(
         "user",
         user.id,
         String(data.otp),
-        "registration"
+        purpose
       );
+
+      console.log("OTP verification result:", verificationResult);
 
       if (!verificationResult.success) {
         // Enhanced error handling with specific status codes
         if (verificationResult.message === 'OTP not found or expired') {
+          // For login OTP, if not found, try to create a new one and suggest resending
+          if (data.otp_type === 'login') {
+            console.log("Login OTP not found, creating a new one...");
+            try {
+              const newOtpRecord = await OtpVerification.createForEntity(
+                "user",
+                user.id,
+                user.phone_code + user.phone_number,
+                "login"
+              );
+              console.log("New login OTP created:", {
+                otp_code: newOtpRecord.otp_code,
+                expires_at: newOtpRecord.expires_at,
+              });
+            } catch (error) {
+              console.error("Error creating new login OTP:", error);
+            }
+          }
+          
           return response.unauthorized("OTP has expired or is invalid", res, {
             error_code: 'OTP_EXPIRED',
-            message: 'The OTP has expired or is invalid. Please request a new one.'
+            message: 'The OTP has expired or is invalid. Please request a new one.',
+            suggestion: data.otp_type === 'login' ? 'A new OTP has been sent to your phone number.' : null
           });
         } else if (verificationResult.message === 'Too many failed attempts') {
           return response.forbidden("Too many failed OTP attempts", res, {
@@ -155,56 +206,142 @@ module.exports = class UserController {
 
       console.log("OTP verified successfully");
 
-      // Mark user as verified
-      user = await userResources.updateUser(
-        {
-          is_verified: 1,
-          verified_at: new Date(),
-        },
-        { id: user.id }
-      );
-      
-      // Get user address information
-      const userAddress = await UserAddress.findOne({
-        where: { user_id: user.id }
-      });
+      // Handle different OTP types
+      if (data.otp_type === 'signup') {
+        // Mark user as verified
+        user = await userResources.updateUser(
+          {
+            is_verified: 1,
+            verified_at: new Date(),
+          },
+          { id: user.id }
+        );
+        
+        // Get user address information
+        const userAddress = await UserAddress.findOne({
+          where: { user_id: user.id }
+        });
 
-      const userObj = {
-        id: user.id,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        full_name: user.full_name,
-        user_type: user.user_type,
-        email: user.email,
-        phone_code: user.phone_code,
-        phone_number: user.phone_number,
-        country_id: userAddress?.country_id || null,
-        city_id: userAddress?.city_id || null,
-        is_verified: user.is_verified,
-      };
-      
-      // Generate JWT token
-      const accessToken = await genrateToken({ ...userObj, userType: "user" });
-      const result = {
-        access_token: accessToken,
-        user: userObj,
-      };
-      
-      return response.success(
-        "User verified and registered successfully",
-        res,
-        result
-      );
+        const userObj = {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          user_type: user.user_type,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          country_id: userAddress?.country_id || null,
+          city_id: userAddress?.city_id || null,
+          is_verified: user.is_verified,
+          verified_at: user.verified_at,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+        };
+        
+        // Generate JWT token
+        const accessToken = await genrateToken({ ...userObj, userType: "user" });
+        const result = {
+          access_token: accessToken,
+          user: userObj,
+        };
+        
+        return response.success(
+          "User verified and registered successfully",
+          res,
+          result
+        );
+      } else if (data.otp_type === 'login') {
+        // For login OTP verification, also verify the user account if not already verified
+        if (!user.is_verified) {
+          user = await userResources.updateUser(
+            {
+              is_verified: 1,
+              verified_at: new Date(),
+            },
+            { id: user.id }
+          );
+        }
+        
+        // Get user address information
+        const userAddress = await UserAddress.findOne({
+          where: { user_id: user.id }
+        });
+
+        const userObj = {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          user_type: user.user_type,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          country_id: userAddress?.country_id || null,
+          city_id: userAddress?.city_id || null,
+          is_verified: user.is_verified,
+          verified_at: user.verified_at,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+        };
+        
+        // Generate JWT token
+        const accessToken = await genrateToken({ ...userObj, userType: "user" });
+        const result = {
+          access_token: accessToken,
+          user: userObj,
+        };
+
+        return response.success(
+          "Login OTP verified successfully. You can now proceed with login.",
+          res,
+          result
+        );
+      } else if (data.otp_type === 'forgot_password') {
+        // For forgot password OTP verification, just return success
+        const result = {
+          id: user.id,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+        };
+
+        return response.success(
+          "Password reset OTP verified successfully. You can now reset your password.",
+          res,
+          result
+        );
+      }
     } catch (err) {
       console.error("Error in OTP verification:", err);
       return response.exception("Internal server error", res);
     }
   }
 
+  // Verify OTP for registration (legacy method - redirects to verifyOtp)
+  async verifyVerificationOtp(req, res) {
+    // Redirect to the new unified verifyOtp method
+    req.body.otp_type = 'signup';
+    return this.verifyOtp(req, res);
+  }
+
   // Resend OTP to user
   async resendOtp(req, res) {
     console.log("UserController@resendOtp");
     const data = req.body;
+    
+    // Validate otp_type
+    if (!data.otp_type || !['signup', 'login', 'forgot_password'].includes(data.otp_type)) {
+      return response.badRequest("Invalid otp_type. Must be one of: signup, login, forgot_password", res, {
+        error_code: 'INVALID_OTP_TYPE',
+        message: 'Please provide a valid OTP type'
+      });
+    }
     
     // Find user by phone number combination
     let user = await userResources.findOne({ 
@@ -219,13 +356,22 @@ module.exports = class UserController {
       });
     }
 
+    // Map otp_type to purpose
+    const purposeMap = {
+      'signup': 'registration',
+      'login': 'login',
+      'forgot_password': 'password_reset'
+    };
+    
+          const purpose = purposeMap[data.otp_type];
+
     // Check rate limiting for OTP requests
     try {
       const recentOtps = await OtpVerification.count({
         where: {
           entity_type: 'user',
           entity_id: user.id,
-          purpose: 'registration',
+          purpose: purpose,
           created_at: {
             [Op.gte]: new Date(Date.now() - 60 * 60 * 1000) // Last 1 hour
           }
@@ -250,11 +396,12 @@ module.exports = class UserController {
         "user",
         user.id,
         user.phone_code + user.phone_number,
-        "registration"
+        purpose
       );
       console.log("New OTP created:", {
         otp_code: otpRecord.otp_code,
         expires_at: otpRecord.expires_at,
+        purpose: purpose
       });
     } catch (error) {
       console.error("Error creating OTP:", error);
@@ -270,6 +417,7 @@ module.exports = class UserController {
       email: user.email,
       phone_code: user.phone_code,
       phone_number: user.phone_number,
+      otp_type: data.otp_type
     };
     
     return response.created("OTP resent successfully", res, result);
@@ -280,20 +428,34 @@ module.exports = class UserController {
     console.log("UserController@authenticate");
     const user = req.user;
     if (!user.is_verified) {
-      // If not verified, send OTP using new system
-      try {
-        const otpRecord = await OtpVerification.createForEntity(
-          "user",
-          user.id,
-          user.phone_code + user.phone_number,
-          "login"
-        );
-        console.log("Login OTP created:", {
-          otp_code: otpRecord.otp_code,
-          expires_at: otpRecord.expires_at,
+      // Check if there's already a valid login OTP
+      const existingLoginOtp = await OtpVerification.findValidForEntity(
+        "user",
+        user.id,
+        "login"
+      );
+
+      if (!existingLoginOtp) {
+        // Generate new login OTP if none exists
+        try {
+          const otpRecord = await OtpVerification.createForEntity(
+            "user",
+            user.id,
+            user.phone_code + user.phone_number,
+            "login"
+          );
+          console.log("Login OTP created:", {
+            otp_code: otpRecord.otp_code,
+            expires_at: otpRecord.expires_at,
+          });
+        } catch (error) {
+          console.error("Error creating login OTP:", error);
+        }
+      } else {
+        console.log("Existing login OTP found:", {
+          otp_code: existingLoginOtp.otp_code,
+          expires_at: existingLoginOtp.expires_at,
         });
-      } catch (error) {
-        console.error("Error creating login OTP:", error);
       }
       // Get user address information
       const userAddress = await UserAddress.findOne({
@@ -314,9 +476,13 @@ module.exports = class UserController {
         is_verified: user.is_verified,
       };
       return response.success(
-        "We have sent a OTP over your registered phone number. Please verify by using the OTP.",
+        "Your account needs to be verified before you can login. OTP has been sent to your registered mobile number for verification.",
         res,
-        result
+        {
+          ...result,
+          verification_required: true,
+          otp_type: 'login' // Specify the OTP type for frontend
+        }
       );
     }
     // If verified, generate token
@@ -334,9 +500,15 @@ module.exports = class UserController {
       email: user.email,
       phone_code: user.phone_code,
       phone_number: user.phone_number,
+      gender: user.gender,
       country_id: userAddress?.country_id || null,
       city_id: userAddress?.city_id || null,
       is_verified: user.is_verified,
+      verified_at: user.verified_at,
+      status: user.status,
+      notification: user.notification,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
     };
     const accessToken = await genrateToken({ ...userObj, userType: "user" });
     const result = {
@@ -350,9 +522,15 @@ module.exports = class UserController {
         email: user.email,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
+        gender: user.gender,
         country_id: userAddress?.country_id || null,
         city_id: userAddress?.city_id || null,
         is_verified: user.is_verified,
+        verified_at: user.verified_at,
+        status: user.status,
+        notification: user.notification,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
       },
     };
     return response.success("Login successfully", res, result);
@@ -394,61 +572,7 @@ module.exports = class UserController {
     return response.success("OTP sent successfully", res, result);
   }
 
-  // Verify OTP for forgot password
-  async verifyForgotPasswordOtp(req, res) {
-    console.log("UserController@verifyForgotPasswordOtp");
-    const data = req.body;
-    
-    // Find user by phone number combination
-    let user = await userResources.findOne({ 
-      phone_code: data.phone_code,
-      phone_number: data.phone_number 
-    });
-    
-    if (!user) {
-      return response.notFound("User not found with the provided phone number", res, {
-        error_code: 'USER_NOT_FOUND',
-        message: 'No user account found with this phone number'
-      });
-    }
-    
-    // Verify OTP using the new system
-    const verificationResult = await OtpVerification.verifyForEntity(
-      "user",
-      user.id,
-      String(data.otp),
-      "password_reset"
-    );
 
-    if (!verificationResult.success) {
-      // Enhanced error handling with specific status codes
-      if (verificationResult.message === 'OTP not found or expired') {
-        return response.unauthorized("OTP has expired or is invalid", res, {
-          error_code: 'OTP_EXPIRED',
-          message: 'The OTP has expired or is invalid. Please request a new one.'
-        });
-      } else if (verificationResult.message === 'Too many failed attempts') {
-        return response.forbidden("Too many failed OTP attempts", res, {
-          error_code: 'TOO_MANY_ATTEMPTS',
-          message: 'Too many failed attempts. Please request a new OTP.'
-        });
-      } else {
-        return response.unauthorized("Invalid OTP", res, {
-          error_code: 'INVALID_OTP',
-          message: 'The OTP you entered is incorrect.'
-        });
-      }
-    }
-
-    console.log("Password reset OTP verified successfully");
-    const result = {
-      id: user.id,
-      phone_code: user.phone_code,
-      phone_number: user.phone_number,
-    };
-    
-    return response.success("User verified successfully", res, result);
-  }
 
   // Reset password after OTP verification
   async resetPassword(req, res) {

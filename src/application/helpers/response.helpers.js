@@ -73,16 +73,18 @@ module.exports = class ResponseHelper {
         // Determine success status based on status code
         const success = code >= 200 && code < 300;
         
-        // Map status codes to error codes
-        const errorCode = this.getErrorCode(code);
-        
         const responseBody = {
             statusCode: code,
             api_ver: process.env.API_VER,
             message: msg,
-            success: success,
-            error_code: errorCode
+            success: success
         };
+        
+        // Only add error_code for error responses (4xx, 5xx)
+        if (!success) {
+            const errorCode = this.getErrorCode(code);
+            responseBody.error_code = errorCode;
+        }
         
         if (data) {
             responseBody.data = data;

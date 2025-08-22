@@ -496,7 +496,7 @@ GET /api/v1/api/providers/bookings/map?date=2025-01-25
 
 #### 1. Create Test User
 ```bash
-curl -X POST http://localhost:8080/api/v1/api/user/register \
+curl -X POST http://localhost:8080/api/v1/api/user/signup \
   -H "Content-Type: application/json" \
   -d '{
     "first_name": "John",
@@ -514,7 +514,7 @@ curl -X POST http://localhost:8080/api/v1/api/user/register \
 
 #### 2. Create Test Provider
 ```bash
-curl -X POST http://localhost:8080/api/v1/api/provider/register \
+curl -X POST http://localhost:8080/api/v1/api/provider/signup \
   -H "Content-Type: application/json" \
   -d '{
     "first_name": "Jane",

@@ -40,12 +40,19 @@ router.get("/", providerController.getWelcome);
 
 // Provider registration
 router.post(
-  "/register",
+  "/signup",
   [providerValidator.register],
   providerController.register
 );
 
-// OTP verification for registration
+// Unified OTP verification for all types
+router.post(
+  "/verify-otp",
+  [providerValidator.verifyOtp],
+  providerController.verifyOtp
+);
+
+// Legacy OTP verification for registration (redirects to verify-otp)
 router.post(
   "/verify-verification-otp",
   [providerValidator.verifyVerificationOtp],
@@ -61,7 +68,7 @@ router.post(
 
 // Provider login/authentication
 router.post(
-  "/authenticate",
+  "/login",
   [providerValidator.authenticate],
   providerController.authenticate
 );
@@ -71,12 +78,6 @@ router.post(
   "/forgot-password",
   [providerValidator.forgotPassword],
   providerController.forgotPassword
-);
-
-router.post(
-  "/verify-forgot-password-otp",
-  [providerValidator.verifyForgotPasswordOtp],
-  providerController.verifyForgotPasswordOtp
 );
 
 router.post(
@@ -211,7 +212,10 @@ router.get(
 // PROVIDER PROFILE MANAGEMENT ROUTES
 // ========================================
 
-// Get provider profile (for authenticated providers)
+// Get provider user data only (for authenticated providers)
+router.get("/user", [providerAuth], providerController.getProviderUser);
+
+// Get service provider profile data only (for authenticated providers)
 router.get("/profile", [providerAuth], providerController.getProviderProfile);
 
 // Update provider profile
