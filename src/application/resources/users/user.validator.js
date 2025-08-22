@@ -96,7 +96,47 @@ module.exports = class UserValidator {
     }
 
     /**
-     * Validates OTP verification request
+     * Validates unified OTP verification request
+     * Checks phone number combination, OTP format, and OTP type
+     */
+    async verifyOtp(req, res, next) {
+        console.log('UserValidator@verifyOtp');
+        try {
+            let schema = {
+                phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
+                    'string.pattern.base': 'Phone code must be 1-4 digits',
+                    'any.required': 'Phone code is required'
+                }),
+                phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
+                    'string.pattern.base': 'Phone number must be 6-15 digits',
+                    'any.required': 'Phone number is required'
+                }),
+                otp: joi.string().length(4).pattern(/^\d+$/).required().messages({
+                    'string.length': 'OTP must be exactly 4 digits',
+                    'string.pattern.base': 'OTP must contain only digits',
+                    'any.required': 'OTP is required'
+                }),
+                otp_type: joi.string().valid('signup', 'login', 'forgot_password').required().messages({
+                    'string.valid': 'OTP type must be one of: signup, login, forgot_password',
+                    'any.required': 'OTP type is required'
+                })
+            }
+            let errors = await joiHelper.joiValidation(req.body, schema);
+            if (errors) {
+                return response.validationError('Validation failed', res, {
+                    error_code: 'VALIDATION_ERROR',
+                    details: errors[0]
+                });
+            }
+            next();
+        } catch (err) {
+            console.error('Validation Error: ', err);
+            return response.exception('Server error occurred', res);
+        }
+    }
+
+    /**
+     * Validates OTP verification request (legacy method)
      * Checks phone number combination and OTP format
      */
     async verifyVerificationOtp(req, res, next) {
@@ -133,7 +173,7 @@ module.exports = class UserValidator {
 
     /**
      * Validates OTP resend request
-     * Checks phone number combination and rate limiting
+     * Checks phone number combination, rate limiting, and OTP type
      */
     async resendOtp(req, res, next) {
         console.log('UserValidator@resendOtp');
@@ -146,6 +186,10 @@ module.exports = class UserValidator {
                 phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
                     'string.pattern.base': 'Phone number must be 6-15 digits',
                     'any.required': 'Phone number is required'
+                }),
+                otp_type: joi.string().valid('signup', 'login', 'forgot_password').required().messages({
+                    'string.valid': 'OTP type must be one of: signup, login, forgot_password',
+                    'any.required': 'OTP type is required'
                 })
             }
             let errors = await joiHelper.joiValidation(req.body, schema);
@@ -188,41 +232,7 @@ module.exports = class UserValidator {
         }
     }
 
-    /**
-     * Validates forgot password OTP verification
-     * Checks phone number combination and OTP format
-     */
-    async verifyForgotPasswordOtp(req, res, next) {
-        console.log('UserValidator@verifyForgotPasswordOtp');
-        try {
-            let schema = {
-                phone_code: joi.string().pattern(/^\d{1,4}$/).required().messages({
-                    'string.pattern.base': 'Phone code must be 1-4 digits',
-                    'any.required': 'Phone code is required'
-                }),
-                phone_number: joi.string().pattern(/^\d{6,15}$/).required().messages({
-                    'string.pattern.base': 'Phone number must be 6-15 digits',
-                    'any.required': 'Phone number is required'
-                }),
-                otp: joi.string().length(4).pattern(/^\d+$/).required().messages({
-                    'string.length': 'OTP must be exactly 4 digits',
-                    'string.pattern.base': 'OTP must contain only digits',
-                    'string.empty': 'OTP is required'
-                })
-            }
-            let errors = await joiHelper.joiValidation(req.body, schema);
-            if (errors) {
-                return response.validationError('Validation failed', res, {
-                    error_code: 'VALIDATION_ERROR',
-                    details: errors[0]
-                });
-            }
-            next();
-        } catch (err) {
-            console.error('Validation Error: ', err);
-            return response.exception('Server error occurred', res);
-        }
-    }
+
 
     /**
      * Validates password reset request

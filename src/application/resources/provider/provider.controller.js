@@ -103,10 +103,12 @@ module.exports = class ProviderController {
         verified_at: user.verified_at,
         is_verified: user.is_verified,
         user_type: user.user_type,
+        status: user.status,
+        notification: user.notification,
       };
 
       return response.success(
-        "Registration successful. Please verify your account with the OTP sent to your phone.",
+        "Account created successfully! Please verify your phone number with the OTP sent to your registered mobile number.",
         res,
         result
       );
@@ -117,13 +119,21 @@ module.exports = class ProviderController {
   }
 
   /**
-   * Verify provider's OTP to complete registration
+   * Unified OTP verification method for all OTP types
    */
-  async verifyVerificationOtp(req, res) {
-    console.log("ProviderController@verifyVerificationOtp");
+  async verifyOtp(req, res) {
+    console.log("ProviderController@verifyOtp");
     const data = req.body;
 
     try {
+      // Validate otp_type
+      if (!data.otp_type || !['signup', 'login', 'forgot_password'].includes(data.otp_type)) {
+        return response.badRequest("Invalid otp_type. Must be one of: signup, login, forgot_password", res, {
+          error_code: 'INVALID_OTP_TYPE',
+          message: 'Please provide a valid OTP type'
+        });
+      }
+
       // Find user by phone number combination
       const user = await User.findOne({
         where: {
@@ -140,19 +150,57 @@ module.exports = class ProviderController {
         });
       }
 
+      // Map otp_type to purpose
+      const purposeMap = {
+        'signup': 'registration',
+        'login': 'login',
+        'forgot_password': 'password_reset'
+      };
+      
+      const purpose = purposeMap[data.otp_type];
+
+      console.log("Attempting to verify OTP:", {
+        entity_type: "provider",
+        entity_id: user.id,
+        otp: String(data.otp),
+        purpose: purpose
+      });
+
       const verificationResult = await OtpVerification.verifyForEntity(
         "provider",
         user.id,
         String(data.otp),
-        "registration"
+        purpose
       );
+
+      console.log("OTP verification result:", verificationResult);
 
       if (!verificationResult.success) {
         // Enhanced error handling with specific status codes
         if (verificationResult.message === 'OTP not found or expired') {
+          // For login OTP, if not found, try to create a new one and suggest resending
+          if (data.otp_type === 'login') {
+            console.log("Login OTP not found, creating a new one...");
+            try {
+              const newOtpRecord = await OtpVerification.createForEntity(
+                "provider",
+                user.id,
+                user.phone_code + user.phone_number,
+                "login"
+              );
+              console.log("New login OTP created:", {
+                otp_code: newOtpRecord.otp_code,
+                expires_at: newOtpRecord.expires_at,
+              });
+            } catch (error) {
+              console.error("Error creating new login OTP:", error);
+            }
+          }
+          
           return response.unauthorized("OTP has expired or is invalid", res, {
             error_code: 'OTP_EXPIRED',
-            message: 'The OTP has expired or is invalid. Please request a new one.'
+            message: 'The OTP has expired or is invalid. Please request a new one.',
+            suggestion: data.otp_type === 'login' ? 'A new OTP has been sent to your phone number.' : null
           });
         } else if (verificationResult.message === 'Too many failed attempts') {
           return response.forbidden("Too many failed OTP attempts", res, {
@@ -167,46 +215,148 @@ module.exports = class ProviderController {
         }
       }
 
-      // Update user verification status and ensure user is active
-      await user.update({
-        verified_at: new Date(),
-        is_verified: 1,
-        status: 1, // Ensure user account is active
-      });
+      // Handle different OTP types
+      if (data.otp_type === 'signup') {
+        // Update user verification status and ensure user is active
+        await user.update({
+          verified_at: new Date(),
+          is_verified: 1,
+          status: 1, // Ensure user account is active
+        });
 
-      const userObj = {
-        user_id: user.id,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        full_name: user.full_name,
-        email: user.email,
-        phone_code: user.phone_code, 
-        phone_number: user.phone_number,
-        verified_at: user.verified_at,
-      };
+        const userObj = {
+          user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code, 
+          phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+        };
 
-      // Generate token for user (no provider profile yet)
-      const accessToken = await genrateToken({
-        user_id: user.id,
-        phone_code: user.phone_code,
-        phone_number: user.phone_number,
-        userType: "provider",
-      });
-      
-      const result = {
-        access_token: accessToken,
-        user: userObj,
-      };
+        // Generate token for user (no provider profile yet)
+        const accessToken = await genrateToken({
+          user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+          userType: "provider",
+        });
+        
+        const result = {
+          access_token: accessToken,
+          user: userObj,
+        };
 
-      return response.success(
-        "Account verification successful. You can now create your provider profile.",
-        res,
-        result
-      );
+        return response.success(
+          "Account verification successful. You can now create your provider profile.",
+          res,
+          result
+        );
+      } else if (data.otp_type === 'login') {
+        // For login OTP verification, also verify the user account if not already verified
+        if (!user.is_verified) {
+          await user.update({
+            verified_at: new Date(),
+            is_verified: 1,
+            status: 1, // Ensure user account is active
+          });
+        }
+
+        const userObj = {
+          user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code, 
+          phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+        };
+
+        // Generate token for user
+        const accessToken = await genrateToken({
+          user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+          userType: "provider",
+        });
+        
+        const result = {
+          access_token: accessToken,
+          user: userObj,
+        };
+
+        return response.success(
+          "Login OTP verified successfully. You can now proceed with login.",
+          res,
+          result
+        );
+      } else if (data.otp_type === 'forgot_password') {
+        // For forgot password OTP verification, just return success
+        const result = {
+          user_id: user.id,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+        };
+
+        return response.success(
+          "Password reset OTP verified successfully. You can now reset your password.",
+          res,
+          result
+        );
+      }
     } catch (error) {
       console.error("Error in OTP verification:", error);
       return response.exception("Internal server error", res);
     }
+  }
+
+  /**
+   * Verify provider's OTP to complete registration (legacy method - redirects to verifyOtp)
+   */
+  async verifyVerificationOtp(req, res) {
+    // Redirect to the new unified verifyOtp method
+    req.body.otp_type = 'signup';
+    return this.verifyOtp(req, res);
   }
 
   /**
@@ -217,6 +367,14 @@ module.exports = class ProviderController {
     const data = req.body;
 
     try {
+      // Validate otp_type
+      if (!data.otp_type || !['signup', 'login', 'forgot_password'].includes(data.otp_type)) {
+        return response.badRequest("Invalid otp_type. Must be one of: signup, login, forgot_password", res, {
+          error_code: 'INVALID_OTP_TYPE',
+          message: 'Please provide a valid OTP type'
+        });
+      }
+
       // Find user by phone number combination
       const user = await User.findOne({
         where: {
@@ -233,13 +391,22 @@ module.exports = class ProviderController {
         });
       }
 
+      // Map otp_type to purpose
+      const purposeMap = {
+        'signup': 'registration',
+        'login': 'login',
+        'forgot_password': 'password_reset'
+      };
+      
+      const purpose = purposeMap[data.otp_type];
+
       // Check rate limiting for OTP requests
       try {
         const recentOtps = await OtpVerification.count({
           where: {
             entity_type: 'provider',
             entity_id: user.id,
-            purpose: 'registration',
+            purpose: purpose,
             created_at: {
               [Op.gte]: new Date(Date.now() - 60 * 60 * 1000) // Last 1 hour
             }
@@ -263,11 +430,12 @@ module.exports = class ProviderController {
           "provider",
           user.id,
           user.phone_code + user.phone_number,
-          "registration"
+          purpose
         );
         console.log("Provider user resend OTP created:", {
           otp_code: otpRecord.otp_code,
           expires_at: otpRecord.expires_at,
+          purpose: purpose
         });
       } catch (error) {
         console.error("Error creating resend OTP:", error);
@@ -280,6 +448,7 @@ module.exports = class ProviderController {
         last_name: user.last_name,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
+        otp_type: data.otp_type
       };
 
       return response.created(
@@ -314,25 +483,40 @@ module.exports = class ProviderController {
 
       // Check if user is verified
       if (!user.is_verified) {
-        // Generate OTP and set it in database (hardcoded as 1111 for now)
-        try {
-          const otpRecord = await OtpVerification.createForEntity(
-            "provider",
-            user.id,
-            user.phone_code + user.phone_number,
-            "registration"
-          );
-          console.log("Provider User OTP created for unverified user:", {
-            otp_code: otpRecord.otp_code,
-            expires_at: otpRecord.expires_at,
+        // Check if there's already a valid login OTP
+        const existingLoginOtp = await OtpVerification.findValidForEntity(
+          "provider",
+          user.id,
+          "login"
+        );
+
+        if (!existingLoginOtp) {
+          // Generate new login OTP if none exists
+          try {
+            const otpRecord = await OtpVerification.createForEntity(
+              "provider",
+              user.id,
+              user.phone_code + user.phone_number,
+              "login"
+            );
+            console.log("Provider User login OTP created for unverified user:", {
+              otp_code: otpRecord.otp_code,
+              expires_at: otpRecord.expires_at,
+            });
+          } catch (error) {
+            console.error("Error creating provider user OTP:", error);
+          }
+        } else {
+          console.log("Existing login OTP found for unverified user:", {
+            otp_code: existingLoginOtp.otp_code,
+            expires_at: existingLoginOtp.expires_at,
           });
-        } catch (error) {
-          console.error("Error creating provider user OTP:", error);
         }
 
         return response.validationError('Please verify your account first', res, {
           verification_required: true,
-          message: 'Your account needs to be verified before you can login'
+          otp_type: 'login', // Specify the OTP type for frontend
+          message: 'Your account needs to be verified before you can login. OTP has been sent to your registered mobile number for verification.'
         });
       }
 
@@ -345,8 +529,20 @@ module.exports = class ProviderController {
         // Generate token with user data and let them create profile
         const userObj = {
           user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
           phone_code: user.phone_code,
           phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
           userType: "provider",
         };
 
@@ -361,7 +557,14 @@ module.exports = class ProviderController {
             email: user.email,
             phone_code: user.phone_code,
             phone_number: user.phone_number,
+            gender: user.gender,
             verified_at: user.verified_at,
+            is_verified: user.is_verified,
+            user_type: user.user_type,
+            status: user.status,
+            notification: user.notification,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
           },
           profile_required: true,
           message: 'Please create your provider profile to continue'
@@ -377,8 +580,20 @@ module.exports = class ProviderController {
         // Generate token even for incomplete steps so user can complete them
         const userObj = {
           user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
           phone_code: user.phone_code,
           phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
           userType: "provider",
         };
 
@@ -399,8 +614,20 @@ module.exports = class ProviderController {
         // Generate token even for unapproved profiles so user can check status
         const userObj = {
           user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
           phone_code: user.phone_code,
           phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
           userType: "provider",
         };
 
@@ -444,8 +671,20 @@ module.exports = class ProviderController {
       // All checks passed - generate token with user model data
       const userObj = {
         user_id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        email: user.email,
         phone_code: user.phone_code,
         phone_number: user.phone_number,
+        gender: user.gender,
+        verified_at: user.verified_at,
+        is_verified: user.is_verified,
+        user_type: user.user_type,
+        status: user.status,
+        notification: user.notification,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
         userType: "provider",
       };
 
@@ -466,6 +705,7 @@ module.exports = class ProviderController {
           email: user.email,
           phone_code: user.phone_code,
           phone_number: user.phone_number,
+          gender: user.gender,
           provider_type: serviceProvider.provider_type,
           salon_name: serviceProvider.salon_name,
           description: serviceProvider.description,
@@ -476,8 +716,13 @@ module.exports = class ProviderController {
           city_id: serviceProviderAddress?.city_id || null,
           step_completed: serviceProvider.step_completed,
           verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
           is_approved: serviceProvider.is_approved,
           status: serviceProvider.status,
+          notification: user.notification,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
         },
       };
 
@@ -537,69 +782,7 @@ module.exports = class ProviderController {
     );
   }
 
-  /**
-   * Verify OTP for password reset
-   */
-  async verifyForgotPasswordOtp(req, res) {
-    console.log("ProviderController@verifyForgotPasswordOtp");
-    const data = req.body;
-    
-    // Find user by phone number combination
-    const user = await User.findOne({
-      where: {
-        phone_code: data.phone_code,
-        phone_number: data.phone_number,
-        user_type: "provider"
-      }
-    });
 
-    if (!user) {
-      return response.notFound("Provider user account not found", res, {
-        error_code: 'PROVIDER_NOT_FOUND',
-        message: 'No provider account found with this phone number'
-      });
-    }
-
-    // Verify OTP against user (not serviceProvider)
-    const verificationResult = await OtpVerification.verifyForEntity(
-      "provider",
-      user.id, // Use user.id instead of serviceProvider.id
-      String(data.otp),
-      "password_reset"
-    );
-
-    if (!verificationResult.success) {
-      // Enhanced error handling with specific status codes
-      if (verificationResult.message === 'OTP not found or expired') {
-        return response.unauthorized("OTP has expired or is invalid", res, {
-          error_code: 'OTP_EXPIRED',
-          message: 'The OTP has expired or is invalid. Please request a new one.'
-        });
-      } else if (verificationResult.message === 'Too many failed attempts') {
-        return response.forbidden("Too many failed OTP attempts", res, {
-          error_code: 'TOO_MANY_ATTEMPTS',
-          message: 'Too many failed attempts. Please request a new OTP.'
-        });
-      } else {
-        return response.unauthorized("Invalid OTP", res, {
-          error_code: 'INVALID_OTP',
-          message: 'The OTP you entered is incorrect.'
-        });
-      }
-    }
-
-    const result = {
-      user_id: user.id,
-      phone_code: user.phone_code,
-      phone_number: user.phone_number,
-    };
-
-    return response.success(
-      "OTP verified successfully. You can now reset your password.",
-      res,
-      result
-    );
-  }
 
   /**
    * Reset provider's password after OTP verification

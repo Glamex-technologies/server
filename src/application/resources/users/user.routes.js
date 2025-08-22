@@ -19,16 +19,16 @@ router.get("/", userController.getWelcome); // Public welcome endpoint
 // ========================================
 
 // User Registration
-router.post("/register", userValidator.register, userController.register); // Register new user(done)
-router.post("/verify-verification-otp", [userValidator.verifyVerificationOtp], userController.verifyVerificationOtp); // Verify OTP during registration(done)
+router.post("/signup", userValidator.register, userController.register); // Register new user(done)
+router.post("/verify-otp", [userValidator.verifyOtp], userController.verifyOtp); // Unified OTP verification for all types
+router.post("/verify-verification-otp", [userValidator.verifyVerificationOtp], userController.verifyVerificationOtp); // Legacy OTP verification (redirects to verify-otp)
 router.post("/resend-otp", [userValidator.resendOtp], userController.resendOtp); // Resend OTP - Update user with new OTP(done)
 
 // User Authentication
-router.post("/authenticate", [userValidator.authenticate], userController.authenticate); // User login
+router.post("/login", [userValidator.authenticate], userController.authenticate); // User login
 
 // Password Recovery Flow
 router.post("/forgot-password", [userValidator.forgotPassword], userController.forgotPassword); // Send OTP for forgotten password
-router.post("/verify-forgot-password-otp", [userValidator.verifyForgotPasswordOtp], userController.verifyForgotPasswordOtp); // Verify OTP for password reset
 router.post("/reset-password", [userValidator.resetPassword], userController.resetPassword); // Reset password
 
 // ========================================
