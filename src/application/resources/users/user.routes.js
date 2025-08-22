@@ -36,6 +36,7 @@ router.post("/reset-password", [userValidator.resetPassword], userController.res
 // ========================================
 
 // User Profile & Account Management
+router.get("/user-profile", [userAuth], userController.getUserProfile); // Get user profile data
 router.get("/logout", [userAuth], userController.logOut); // Logout user
 router.post("/change-password", [userAuth, userValidator.changePassword], userController.changePassword); // Change password
 router.post("/delete-my-account", [userAuth, userValidator.deleteMyAccount], userController.deleteMyAccount); // User deletes their account
