@@ -52,12 +52,7 @@ router.post(
   providerController.verifyOtp
 );
 
-// Legacy OTP verification for registration (redirects to verify-otp)
-router.post(
-  "/verify-verification-otp",
-  [providerValidator.verifyVerificationOtp],
-  providerController.verifyVerificationOtp
-);
+
 
 // Resend OTP
 router.post(
@@ -221,10 +216,17 @@ router.get("/profile", [providerAuth], providerController.getProviderProfile);
 // Update provider profile
 router.put("/profile", [providerAuth, providerValidator.updateProvider], providerController.updateProvider);
 
+// Get current availability status
+router.get(
+  "/availability-status",
+  [providerAuth],
+  providerController.getAvailabilityStatus
+);
+
 // Toggle availability status
 router.post(
   "/toggle-availability",
-  [providerAuth],
+  [providerAuth, providerValidator.toggleAvailability],
   providerController.toggleAvailability
 );
 

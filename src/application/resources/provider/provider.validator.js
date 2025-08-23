@@ -1100,5 +1100,28 @@ module.exports = class ProviderValidator {
     }
   }
 
+  /**
+   * Validates toggle availability request
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Function} next - Express next middleware function
+   */
+  async toggleAvailability(req, res, next) {
+    console.log("ProviderValidator@toggleAvailability");
+    try {
+      // No body validation needed for toggle - it's a simple toggle operation
+      // The validation will be done in the controller to check provider status
+      
+      // Ensure provider exists and is authenticated
+      if (!req.provider) {
+        return response.validationError("Provider not found or not authenticated", res, false);
+      }
+
+      next();
+    } catch (err) {
+      console.error("Validation Error: ", err);
+      return response.exception("Server error occurred", res);
+    }
+  }
 
 }
