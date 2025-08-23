@@ -233,7 +233,7 @@ router.post(
 // Change password
 router.post(
   "/change-password",
-  [providerAuth],
+  [providerAuth, providerValidator.changePassword],
   providerController.changePassword
 );
 

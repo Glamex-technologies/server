@@ -3924,33 +3924,55 @@ module.exports = class ProviderController {
 
   /**
    * Change provider's password after verifying old password
+   * Implements industry-standard password change with security best practices
    */
   async changePassword(req, res) {
+    console.log("ProviderController@changePassword");
     try {
       const { old_password, new_password } = req.body;
       const provider = req.provider;
       const user = req.user;
 
+      // Verify current password
       const isMatch = await bcrypt.compare(old_password, user.password);
-
       if (!isMatch) {
-        return response.badRequest(
-          "The current password you entered is incorrect",
-          res
+        return response.unauthorized(
+          "Current password is incorrect",
+          res,
+          {
+            error_code: "INVALID_CURRENT_PASSWORD",
+            message: "The current password you entered is incorrect"
+          }
         );
       }
 
-      const hashedNewPassword = await bcrypt.hash(new_password, 10);
+      // Hash new password with industry-standard salt rounds
+      const hashedNewPassword = await bcrypt.hash(new_password, 12);
+      
+      // Update user password
       await userResources.updateUser(
-        { password: hashedNewPassword },
+        { 
+          password: hashedNewPassword,
+          updated_at: new Date()
+        },
         { id: user.id }
       );
 
-      return response.success("Password changed successfully", res);
+      // Log password change for security audit (without sensitive data)
+      console.log(`Password changed successfully for provider user ID: ${user.id} at ${new Date().toISOString()}`);
+
+      return response.success(
+        "Password changed successfully",
+        res,
+        {
+          message: "Your password has been updated successfully. Please use your new password for future logins.",
+          updated_at: new Date()
+        }
+      );
     } catch (error) {
-      console.log(error);
+      console.error("Error in changePassword:", error);
       return response.exception(
-        "An error occurred while changing password",
+        "An error occurred while changing password. Please try again.",
         res
       );
     }

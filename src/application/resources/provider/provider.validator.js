@@ -874,29 +874,42 @@ module.exports = class ProviderValidator {
     try {
       // Define validation schema for password change
       let schema = {
-        old_password: joi.string().required(),
+        old_password: joi.string().required().messages({
+          "string.empty": "Current password is required.",
+          "any.required": "Current password is required."
+        }),
         new_password: joi
           .string()
           .required()
           .min(8)
+          .max(128)
           .pattern(
             new RegExp(
-              "^(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$"
+              "^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$"
             )
           )
-          .required()
           .messages({
-            "string.empty": "Password is required.",
-            "string.min": "Password must be at least 8 characters long.",
+            "string.empty": "New password is required.",
+            "string.min": "New password must be at least 8 characters long.",
+            "string.max": "New password cannot exceed 128 characters.",
             "string.pattern.base":
-              "Password must contain at least one uppercase letter, one number, and one special character.",
+              "New password must contain at least one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&).",
           }),
+        confirm_password: joi.string().required().valid(joi.ref('new_password')).messages({
+          "string.empty": "Password confirmation is required.",
+          "any.only": "Password confirmation does not match the new password."
+        })
       };
 
       // Validate request body against schema
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
-        return response.validationError("invalid request", res, errors[0]);
+        return response.validationError("Invalid request", res, errors[0]);
+      }
+
+      // Additional validation: ensure new password is different from old password
+      if (req.body.old_password === req.body.new_password) {
+        return response.validationError("New password must be different from current password", res, false);
       }
 
       next();
