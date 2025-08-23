@@ -2660,25 +2660,6 @@ module.exports = class ProviderController {
         commercial_registration_image_url:
           basicProvider.commercial_registration_image_url,
 
-        // User Info
-        user: userDetails
-          ? {
-              id: userDetails.id,
-              first_name: userDetails.first_name,
-              last_name: userDetails.last_name,
-              full_name: userDetails.full_name,
-              email: userDetails.email,
-              phone_code: userDetails.phone_code,
-              phone_number: userDetails.phone_number,
-              gender: userDetails.gender,
-              is_verified: userDetails.is_verified,
-              verified_at: userDetails.verified_at,
-              profile_image: userDetails.profile_image,
-              status: userDetails.status,
-              notification: userDetails.notification,
-            }
-          : null,
-
         // Address Info
         address: addressDetails,
 

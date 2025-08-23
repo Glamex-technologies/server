@@ -52,18 +52,31 @@ module.exports = class UserResources {
   }
 
   // Update user data based on query
-  async updateUser(data, query) {
+  async updateUser(data, query, transaction = null) {
     try {
-      await User.update(data, {
+      const updateOptions = {
         where: query,
-      });
+      };
+      
+      if (transaction) {
+        updateOptions.transaction = transaction;
+      }
+      
+      await User.update(data, updateOptions);
+      
       // Fetch updated user
-      const updatedUser = await User.findOne({
+      const findOptions = {
         where: query,
-      }); 
+      };
+      
+      if (transaction) {
+        findOptions.transaction = transaction;
+      }
+      
+      const updatedUser = await User.findOne(findOptions); 
       return updatedUser;  
     } catch (error) {
-      console.error('Error in updating provider:', error);
+      console.error('Error in updating user:', error);
       throw error;
     }
   }

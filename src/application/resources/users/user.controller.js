@@ -49,7 +49,7 @@ module.exports = class UserController {
         user_id: user.id,
         country_id: data.country_id,
         city_id: data.city_id,
-        address: null, // Will be filled later
+        address: data.address, // Use the address from signup
         latitude: null, // Will be filled later
         longitude: null, // Will be filled later
       };
@@ -94,6 +94,7 @@ module.exports = class UserController {
       gender: user.gender,
       country_id: userAddress?.country_id || null,
       city_id: userAddress?.city_id || null,
+      address: userAddress?.address || null,
       is_verified: user.is_verified,
       verified_at: user.verified_at,
       status: user.status,
@@ -212,6 +213,7 @@ module.exports = class UserController {
           gender: user.gender,
           country_id: userAddress?.country_id || null,
           city_id: userAddress?.city_id || null,
+          address: userAddress?.address || null,
           is_verified: user.is_verified,
           verified_at: user.verified_at,
           status: user.status,
@@ -261,6 +263,7 @@ module.exports = class UserController {
           gender: user.gender,
           country_id: userAddress?.country_id || null,
           city_id: userAddress?.city_id || null,
+          address: userAddress?.address || null,
           is_verified: user.is_verified,
           verified_at: user.verified_at,
           status: user.status,
@@ -451,6 +454,7 @@ module.exports = class UserController {
         phone_number: user.phone_number,
         country_id: userAddress?.country_id || null,
         city_id: userAddress?.city_id || null,
+        address: userAddress?.address || null,
         is_verified: user.is_verified,
       };
       return response.success(
@@ -481,6 +485,7 @@ module.exports = class UserController {
       gender: user.gender,
       country_id: userAddress?.country_id || null,
       city_id: userAddress?.city_id || null,
+      address: userAddress?.address || null,
       is_verified: user.is_verified,
       verified_at: user.verified_at,
       status: user.status,
@@ -503,6 +508,7 @@ module.exports = class UserController {
         gender: user.gender,
         country_id: userAddress?.country_id || null,
         city_id: userAddress?.city_id || null,
+        address: userAddress?.address || null,
         is_verified: user.is_verified,
         verified_at: user.verified_at,
         status: user.status,
@@ -753,64 +759,333 @@ module.exports = class UserController {
     }
   }
 
-  // Logout user (invalidate token)
+  // Logout user (invalidate token) - Following provider module logic
   async logOut(req, res) {
+    const startTime = Date.now();
+    const logoutId = `user_logout_${Date.now()}_${Math.random()
+      .toString(36)
+      .substr(2, 9)}`;
+
     try {
+      console.log(`[${logoutId}] User logout initiated`);
+
+      // Extract and validate authorization header
       const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return response.forbidden("Authorization token missing", res);
+      if (!authHeader) {
+        console.log(`[${logoutId}] ❌ No authorization header provided`);
+        return response.unauthorized("Authentication token is required", res, {
+          error_code: "AUTHENTICATION_REQUIRED",
+          message: "Authentication token is required"
+        });
       }
+
+      if (!authHeader.startsWith("Bearer ")) {
+        console.log(`[${logoutId}] ❌ Invalid authorization header format`);
+        return response.unauthorized("Invalid token format", res, {
+          error_code: "INVALID_TOKEN_FORMAT",
+          message: "Invalid token format"
+        });
+      }
+
       const token = authHeader.split(" ")[1];
-      await userResources.logOut({ token: token });
-      return response.success("Admin logged out successfully", res);
+      if (!token || token.trim().length === 0) {
+        console.log(`[${logoutId}] ❌ Empty token provided`);
+        return response.unauthorized("Token cannot be empty", res, {
+          error_code: "EMPTY_TOKEN",
+          message: "Token cannot be empty"
+        });
+      }
+
+      // Validate token format (basic JWT structure check)
+      if (!this.isValidJWTFormat(token)) {
+        console.log(`[${logoutId}] ❌ Invalid JWT token format`);
+        return response.unauthorized("Invalid token format", res, {
+          error_code: "INVALID_TOKEN_FORMAT",
+          message: "Invalid token format"
+        });
+      }
+
+      // Get user context for audit logging
+      const user = req.user;
+      const userContext = {
+        user_id: user?.id,
+        email: user?.email,
+        phone: user?.phone_number,
+      };
+
+      console.log(`[${logoutId}] 🔍 Logging out user:`, userContext);
+
+      // Perform token invalidation
+      const logoutResult = await this.performTokenInvalidation(token, logoutId);
+
+      if (!logoutResult.success) {
+        console.log(
+          `[${logoutId}] ❌ Token invalidation failed:`,
+          logoutResult.error
+        );
+        return response.custom(logoutResult.statusCode, logoutResult.message, res, {
+          error_code: logoutResult.errorCode,
+          message: logoutResult.message
+        });
+      }
+
+      // Log successful logout
+      const duration = Date.now() - startTime;
+      console.log(
+        `[${logoutId}] ✅ User logout successful - Duration: ${duration}ms`,
+        {
+          user_id: userContext.user_id,
+          duration_ms: duration,
+          timestamp: new Date().toISOString(),
+        }
+      );
+
+      return response.success("User logged out successfully", res, {
+        message: "You have been successfully logged out",
+        logout_id: logoutId,
+        timestamp: new Date().toISOString()
+      });
     } catch (error) {
-      console.log(error);
-      return response.exception("server error", res);
+      const duration = Date.now() - startTime;
+      console.error(`[${logoutId}] ❌ Unexpected error during logout:`, {
+        error: error.message,
+        stack: error.stack,
+        duration_ms: duration,
+        timestamp: new Date().toISOString(),
+      });
+
+      return response.exception("An unexpected error occurred during logout", res);
     }
   }
 
-  // Change user password
+  /**
+   * Validate JWT token format (basic structure check)
+   */
+  isValidJWTFormat(token) {
+    try {
+      // JWT tokens have 3 parts separated by dots
+      const parts = token.split(".");
+      if (parts.length !== 3) {
+        return false;
+      }
+
+      // Each part should be base64url encoded
+      const base64UrlRegex = /^[A-Za-z0-9_-]+$/;
+      return parts.every((part) => base64UrlRegex.test(part));
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Perform token invalidation with comprehensive error handling
+   */
+  async performTokenInvalidation(token, logoutId) {
+    try {
+      // Perform token deletion
+      const deletedCount = await userResources.logOut({ token: token });
+
+      if (deletedCount === 0) {
+        console.log(`[${logoutId}] ❌ No tokens were deleted`);
+        return {
+          success: false,
+          statusCode: 401,
+          errorCode: "TOKEN_NOT_FOUND",
+          message: "Token not found or already invalidated",
+        };
+      }
+
+      console.log(
+        `[${logoutId}] ✅ Token successfully invalidated. Deleted count: ${deletedCount}`
+      );
+      return { success: true };
+    } catch (error) {
+      console.error(`[${logoutId}] ❌ Token invalidation error:`, error);
+
+      // Categorize database errors
+      if (
+        error.name === "SequelizeConnectionError" ||
+        error.name === "SequelizeDatabaseError"
+      ) {
+        return {
+          success: false,
+          statusCode: 503,
+          errorCode: "DATABASE_ERROR",
+          message: "Database service temporarily unavailable",
+        };
+      }
+
+      return {
+        success: false,
+        statusCode: 500,
+        errorCode: "INTERNAL_SERVER_ERROR",
+        message: "Failed to invalidate token",
+      };
+    }
+  }
+
+  // Change user password - Following provider module logic
   async changePassword(req, res) {
+    console.log("UserController@changePassword");
     try {
       const { old_password, new_password } = req.body;
       const user = req.user;
-      // Check if old password matches
+
+      // Verify current password
       const isMatch = await bcrypt.compare(old_password, user.password);
       if (!isMatch) {
-        return response.badRequest("Old password is incorrect", res);
+        return response.unauthorized(
+          "Current password is incorrect",
+          res,
+          {
+            error_code: "INVALID_CURRENT_PASSWORD",
+            message: "The current password you entered is incorrect"
+          }
+        );
       }
-      // Hash and update new password
-      const hashedNewPassword = await bcrypt.hash(new_password, 10);
+
+      // Hash new password with industry-standard salt rounds
+      const hashedNewPassword = await bcrypt.hash(new_password, 12);
+      
+      // Update user password
       await userResources.updateUser(
-        { password: hashedNewPassword },
+        { 
+          password: hashedNewPassword,
+          updated_at: new Date()
+        },
         { id: user.id }
       );
-      return response.success("Password changed successfully", res);
+
+      // Log password change for security audit (without sensitive data)
+      console.log(`Password changed successfully for user ID: ${user.id} at ${new Date().toISOString()}`);
+
+      return response.success(
+        "Password changed successfully",
+        res,
+        {
+          message: "Your password has been updated successfully. Please use your new password for future logins.",
+          updated_at: new Date()
+        }
+      );
     } catch (error) {
-      console.log(error);
-      return response.exception("server error", res);
+      console.error("Error in changePassword:", error);
+      return response.exception(
+        "An error occurred while changing password. Please try again.",
+        res
+      );
     }
   }
 
-  // Delete user account (soft delete)
+  // Delete user account with comprehensive soft deletion - Following provider module logic
   async deleteMyAccount(req, res) {
+    console.log("UserController@deleteMyAccount");
+    const { password, reason_id } = req.body;
+    const user = req.user;
+
     try {
-      const { password } = req.body;
-      const user = req.user;
-      // Check if password matches
+      // Validate password
+      if (!password) {
+        return response.badRequest(
+          "Password is required for account deletion",
+          res,
+          {
+            error_code: "PASSWORD_REQUIRED",
+            message: "Please provide your password to confirm account deletion",
+          }
+        );
+      }
+
+      // Verify password
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
-        return response.badRequest("You have entered wrong password.", res);
+        return response.unauthorized("Incorrect password", res, {
+          error_code: "INVALID_PASSWORD",
+          message: "The password you entered is incorrect",
+        });
       }
-      // Soft delete by setting deleted_at
-      await userResources.updateUser(
-        { deleted_at: new Date() },
-        { id: user.id }
-      );
-      return response.success("Account deleted successfully.", res);
+
+      // Start transaction for atomic operations
+      const transaction = await db.sequelize.transaction();
+
+      try {
+        // Soft delete user address records
+        await UserAddress.update(
+          { deleted_at: new Date() },
+          {
+            where: { user_id: user.id },
+            transaction,
+          }
+        );
+
+        // Soft delete user account
+        await userResources.updateUser(
+          {
+            status: 0,
+            notification: 0,
+            deleted_at: new Date(),
+          },
+          { id: user.id },
+          transaction
+        );
+
+        // Invalidate all tokens for this user (if token model exists)
+        try {
+          if (db.models.Token) {
+            await db.models.Token.update(
+              {
+                is_active: 0,
+                deleted_at: new Date(),
+              },
+              {
+                where: { user_id: user.id },
+                transaction,
+              }
+            );
+          }
+        } catch (tokenError) {
+          console.log(
+            "Token invalidation skipped (Token model may not exist):",
+            tokenError.message
+          );
+        }
+
+        // Commit transaction
+        await transaction.commit();
+
+        // Log deletion for audit purposes
+        console.log(`User account deletion completed:`, {
+          user_id: user.id,
+          email: user.email,
+          phone: user.phone_number,
+          reason_id: reason_id,
+          deleted_at: new Date().toISOString(),
+        });
+
+        return response.success(
+          "Your account has been deleted successfully",
+          res,
+          {
+            message: "Account deletion completed",
+            user_id: user.id,
+            deletion_timestamp: new Date().toISOString(),
+            note: "Your account has been soft deleted successfully.",
+          }
+        );
+      } catch (transactionError) {
+        // Rollback transaction on error
+        await transaction.rollback();
+        console.error(
+          "Transaction error during account deletion:",
+          transactionError
+        );
+        throw transactionError;
+      }
     } catch (error) {
-      console.log(error);
-      return response.exception("server error", res);
+      console.error("Error deleting user account:", error);
+      return response.exception(
+        "An error occurred while deleting your account",
+        res
+      );
     }
   }
 
@@ -825,38 +1100,64 @@ module.exports = class UserController {
     const user = req.user;
 
     try {
-      // Get user address information
+      // Get user address information with country and city details
       const userAddress = await UserAddress.findOne({
-        where: { user_id: user.id }
+        where: { user_id: user.id },
+        include: [
+          {
+            model: db.models.Country,
+            as: "country",
+            attributes: ['id', 'name']
+          },
+          {
+            model: db.models.City,
+            as: "city",
+            attributes: ['id', 'name']
+          }
+        ]
       });
 
-      // Return user data with address information
+      // Prepare user data (without address fields)
       const userData = {
-        user: {
-          id: user.id,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          full_name: user.full_name,
-          email: user.email,
-          phone_code: user.phone_code,
-          phone_number: user.phone_number,
-          gender: user.gender,
-          is_verified: user.is_verified,
-          verified_at: user.verified_at,
-          profile_image: user.profile_image,
-          status: user.status,
-          notification: user.notification,
-          country_id: userAddress?.country_id || null,
-          city_id: userAddress?.city_id || null,
-          address: userAddress?.address || null,
-          latitude: userAddress?.latitude || null,
-          longitude: userAddress?.longitude || null,
-          created_at: user.created_at,
-          updated_at: user.updated_at
-        }
+        id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        email: user.email,
+        phone_code: user.phone_code,
+        phone_number: user.phone_number,
+        gender: user.gender,
+        is_verified: user.is_verified,
+        verified_at: user.verified_at,
+        profile_image: user.profile_image,
+        status: user.status,
+        notification: user.notification
+      };
+
+      // Prepare address data
+      const addressData = userAddress ? {
+        id: userAddress.id,
+        address: userAddress.address,
+        latitude: userAddress.latitude,
+        longitude: userAddress.longitude,
+        country_id: userAddress.country_id,
+        city_id: userAddress.city_id,
+        country: userAddress.country ? {
+          id: userAddress.country.id,
+          name: userAddress.country.name
+        } : null,
+        city: userAddress.city ? {
+          id: userAddress.city.id,
+          name: userAddress.city.name
+        } : null
+      } : null;
+
+      const result = {
+        user: userData,
+        address: addressData
       };
       
-      return response.success("User profile data retrieved successfully", res, userData);
+      return response.success("User profile data retrieved successfully", res, result);
     } catch (error) {
       console.error("Error getting user profile data:", error);
       return response.exception("Failed to retrieve user profile data", res);
