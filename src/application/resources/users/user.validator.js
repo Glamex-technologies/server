@@ -58,6 +58,11 @@ module.exports = class UserValidator {
                 phone_number: joi.string().pattern(/^\d+$/).required(),
                 country_id: joi.number().min(1).required(),
                 city_id: joi.number().min(1).required(),
+                address: joi.string().required().min(5).max(500).messages({
+                    'string.empty': 'Address is required.',
+                    'string.min': 'Address must be at least 5 characters long.',
+                    'string.max': 'Address cannot exceed 500 characters.',
+                }),
                 password: joi.string().required().min(8).pattern(new RegExp('^(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$')).required().messages({
                     'string.empty': 'Password is required.',
                     'string.min': 'Password must be at least 8 characters long.',
@@ -287,22 +292,27 @@ module.exports = class UserValidator {
      * Supports pagination, sorting and filtering
      */
     async getAllUsers(req, res, next) {
-        console.log('ProviderValidator@getAllUsers');
+        console.log('UserValidator@getAllUsers');
         try {
             let schema = {
-                page: joi.number().optional(),
-                limit: joi.number().optional(),
+                // Pagination parameters
+                page: joi.number().min(1).default(1),
+                limit: joi.number().min(1).max(100).default(10), // Max 100 records per page
+                
+                // Filter parameters
                 status: joi.number().valid(1, 2, 3).optional(),
-                country: joi.number().optional(),
-                city: joi.number().optional(),
-                search: joi.string().optional(),
-                sortBy: joi.string().valid('first_name', 'last_name', 'created_at', 'status').default('created_at'),
+                search: joi.string().max(100).optional(),
+                
+                // Sorting parameters
+                sortBy: joi.string().valid('first_name', 'last_name', 'email', 'created_at', 'status', 'is_verified').default('created_at'),
                 sortOrder: joi.string().valid('DESC', 'ASC').default('DESC')
             }
+            
             let errors = await joiHelper.joiValidation(req.query, schema);
             if (errors) {
                 return response.validationError('invalid request', res, errors[0])
             }
+            
             next();
         } catch (err) {
             console.error('Validation Error: ', err);
@@ -312,7 +322,7 @@ module.exports = class UserValidator {
 
     /**
      * Validates get single user request
-     * Checks user ID exists
+     * Checks user ID exists in params
      */
     async getUser(req, res, next) {
         console.log('UserValidator@getUser');
@@ -320,7 +330,7 @@ module.exports = class UserValidator {
             let schema = {
                 user_id: joi.number().required().min(1)
             }
-            let errors = await joiHelper.joiValidation(req.query, schema);
+            let errors = await joiHelper.joiValidation(req.params, schema);
             if (errors) {
                 return response.validationError('invalid request', res, errors[0])
             }
@@ -332,53 +342,150 @@ module.exports = class UserValidator {
     }
 
     /**
-     * Validates user update request
-     * Checks all updatable fields
+     * Validates user update request by admin
+     * Checks user ID in params and updatable fields in body
      */
     async updateUser(req, res, next) {
         console.log('UserValidator@updateUser');
         try {
-            let schema = {
-                user_id: joi.number().required().min(1),
-                first_name: joi.string().optional(),
-                last_name: joi.string().optional(),
-                email: joi.string().email().optional().allow(null),
+            // Validate user_id in params
+            let paramsSchema = {
+                user_id: joi.number().required().min(1)
+            }
+            let paramsErrors = await joiHelper.joiValidation(req.params, paramsSchema);
+            if (paramsErrors) {
+                return response.validationError('invalid user_id', res, paramsErrors[0])
+            }
+
+            // Validate update fields in body
+            let bodySchema = {
+                first_name: joi.string().min(2).max(50).optional(),
+                last_name: joi.string().min(2).max(50).optional(),
+                full_name: joi.string().min(2).max(100).optional(),
+                email: joi.string().email().optional(),
+                gender: joi.number().valid(1, 2, 3).optional(), // 1 = male, 2 = female, 3 = other
+                profile_image: joi.string().uri().optional(),
+                status: joi.number().valid(1, 2, 3).optional(), // 1 active 2 inactive 3 block
+                notification: joi.number().valid(0, 1).optional(),
+                fcm_token: joi.string().optional(),
+                
+                // Address fields
+                address: joi.string().max(500).optional(),
+                latitude: joi.number().min(-90).max(90).optional(),
+                longitude: joi.number().min(-180).max(180).optional(),
                 country_id: joi.number().min(1).optional(),
                 city_id: joi.number().min(1).optional(),
-                profile_image: joi.string().optional().allow(null),
-                status: joi.number().valid(1, 2, 3).optional(), // 1 active 2 inactive 3 block
-                gender: joi.number().valid(1, 2, 3).optional() // 1 active 2 inactive 3 block
             }
-            let errors = await joiHelper.joiValidation(req.body, schema);
-            if (errors) {
-                return response.validationError('invalid request', res, errors[0])
+            let bodyErrors = await joiHelper.joiValidation(req.body, bodySchema);
+            if (bodyErrors) {
+                return response.validationError('invalid update data', res, bodyErrors[0])
             }
             next();
         } catch (err) {
             console.error('Validation Error: ', err);
             return response.exception('Server error occurred', res);
+        }
+    }
+
+    /**
+     * Validates user profile update request
+     * Allows users to update their own profile fields
+     */
+    async updateUserProfile(req, res, next) {
+        console.log('UserValidator@updateUserProfile');
+        try {
+            // Define comprehensive validation schema for updating user profile
+            let schema = {
+                // User fields
+                first_name: joi.string().min(2).max(50).optional(),
+                last_name: joi.string().min(2).max(50).optional(),
+                full_name: joi.string().min(2).max(100).optional(),
+                email: joi.string().email().optional(),
+                gender: joi.number().valid(1, 2, 3).optional(), // 1 = male, 2 = female, 3 = other
+                profile_image: joi.string().uri().optional(),
+                notification: joi.number().valid(0, 1).optional(),
+                fcm_token: joi.string().optional(),
+                
+                // Address fields
+                address: joi.string().max(500).optional(),
+                latitude: joi.number().min(-90).max(90).optional(),
+                longitude: joi.number().min(-180).max(180).optional(),
+                country_id: joi.number().min(1).optional(),
+                city_id: joi.number().min(1).optional(),
+            };
+
+            // Validate request body against schema
+            let errors = await joiHelper.joiValidation(req.body, schema);
+            if (errors) {
+                return response.validationError("Invalid update data", res, {
+                    error_code: 'VALIDATION_ERROR',
+                    message: errors[0],
+                    field: errors[0].path ? errors[0].path[0] : 'unknown'
+                });
+            }
+
+            // Validate that at least one field is provided
+            if (!req.body || Object.keys(req.body).length === 0) {
+                return response.badRequest("No update data provided", res, {
+                    error_code: 'MISSING_UPDATE_DATA',
+                    message: 'Please provide at least one field to update'
+                });
+            }
+
+            next();
+        } catch (err) {
+            console.error("Validation Error: ", err);
+            return response.exception("Server error occurred", res);
         }
     }
 
     /**
      * Validates password change request
-     * Checks old password and new password requirements
+     * Checks old password, new password requirements, and password confirmation
      */
     async changePassword(req, res, next) {
         console.log('UserValidator@changePassword');
         try {
+            // Define validation schema for password change
             let schema = {
-                old_password: joi.string().required(),
-                new_password: joi.string().required().min(8).pattern(new RegExp('^(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$')).required().messages({
-                    'string.empty': 'Password is required.',
-                    'string.min': 'Password must be at least 8 characters long.',
-                    'string.pattern.base': 'Password must contain at least one uppercase letter, one number, and one special character.',
+                old_password: joi.string().required().messages({
+                    "string.empty": "Current password is required.",
+                    "any.required": "Current password is required."
+                }),
+                new_password: joi
+                    .string()
+                    .required()
+                    .min(8)
+                    .max(128)
+                    .pattern(
+                        new RegExp(
+                            "^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$"
+                        )
+                    )
+                    .messages({
+                        "string.empty": "New password is required.",
+                        "string.min": "New password must be at least 8 characters long.",
+                        "string.max": "New password cannot exceed 128 characters.",
+                        "string.pattern.base":
+                            "New password must contain at least one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&).",
+                    }),
+                confirm_password: joi.string().required().valid(joi.ref('new_password')).messages({
+                    "string.empty": "Password confirmation is required.",
+                    "any.only": "Password confirmation does not match the new password."
                 })
-            }
+            };
+
+            // Validate request body against schema
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
-                return response.validationError('invalid request', res, errors[0])
+                return response.validationError("Invalid request", res, errors[0]);
             }
+
+            // Additional validation: ensure new password is different from old password
+            if (req.body.old_password === req.body.new_password) {
+                return response.validationError("New password must be different from current password", res, false);
+            }
+
             next();
         } catch (err) {
             console.error('Validation Error: ', err);
@@ -400,6 +507,27 @@ module.exports = class UserValidator {
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
                 return response.validationError('invalid request', res, errors[0])
+            }
+            next();
+        } catch (err) {
+            console.error('Validation Error: ', err);
+            return response.exception('Server error occurred', res);
+        }
+    }
+
+    /**
+     * Validates user deletion request by admin
+     * Checks user ID exists in params
+     */
+    async deleteUser(req, res, next) {
+        console.log('UserValidator@deleteUser');
+        try {
+            let schema = {
+                user_id: joi.number().required().min(1)
+            }
+            let errors = await joiHelper.joiValidation(req.params, schema);
+            if (errors) {
+                return response.validationError('invalid user_id', res, errors[0])
             }
             next();
         } catch (err) {

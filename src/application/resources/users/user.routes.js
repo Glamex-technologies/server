@@ -37,9 +37,10 @@ router.post("/reset-password", [userValidator.resetPassword], userController.res
 
 // User Profile & Account Management
 router.get("/user-profile", [userAuth], userController.getUserProfile); // Get user profile data
+router.put("/user-profile", [userAuth, userValidator.updateUserProfile], userController.updateUserProfile); // User updates their own profile
 router.get("/logout", [userAuth], userController.logOut); // Logout user
 router.post("/change-password", [userAuth, userValidator.changePassword], userController.changePassword); // Change password
-router.post("/delete-my-account", [userAuth, userValidator.deleteMyAccount], userController.deleteMyAccount); // User deletes their account
+router.delete("/delete-my-account", [userAuth, userValidator.deleteMyAccount], userController.deleteMyAccount); // User deletes their account
 
 // ========================================
 // FILE UPLOAD ROUTES
@@ -54,7 +55,8 @@ router.post("/upload-files", uploadFileToS3(), userController.uploadFiles); // U
 
 // Admin: User Management
 router.get("/get-all", [adminAuth, userValidator.getAllUsers], userController.getAllUsers); // Admin gets list of all users
-router.get("/get-user", [adminAuth, userValidator.getUser], userController.getUser); // Admin gets single user details
-router.post("/update-user", [adminAuth, userValidator.updateUser], userController.updateUser); // Admin updates user data
+router.get("/get-user/:user_id", [adminAuth, userValidator.getUser], userController.getUser); // Admin gets single user details
+router.put("/update-user/:user_id", [adminAuth, userValidator.updateUser], userController.updateUser); // Admin updates user data
+router.delete("/delete-user/:user_id", [adminAuth, userValidator.deleteUser], userController.deleteUser); // Admin deletes user account
 
 module.exports = router;
