@@ -75,76 +75,149 @@ module.exports = class ProviderValidator {
   async register(req, res, next) {
     console.log("ProviderValidator@register");
     try {
-      // Define validation schema for registration
+      // Enhanced validation schema with comprehensive field validation
       let schema = {
-        first_name: joi.string().required(),
-        last_name: joi.string().required(),
-        email: joi.string().email().optional(),
-        phone_code: joi.string().pattern(/^\d+$/).required(),
-        phone_number: joi.string().pattern(/^\d+$/).required(),
-        password: joi
-          .string()
+        first_name: joi.string()
           .required()
-          .min(8)
-          .pattern(
-            new RegExp(
-              "^(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$"
-            )
-          )
+          .min(2)
+          .max(50)
+          .pattern(/^[a-zA-Z\s]+$/)
+          .messages({
+            'string.empty': 'First name is required.',
+            'string.min': 'First name must be at least 2 characters long.',
+            'string.max': 'First name cannot exceed 50 characters.',
+            'string.pattern.base': 'First name can only contain letters and spaces.',
+            'any.required': 'First name is required.'
+          }),
+        last_name: joi.string()
+          .required()
+          .min(2)
+          .max(50)
+          .pattern(/^[a-zA-Z\s]+$/)
+          .messages({
+            'string.empty': 'Last name is required.',
+            'string.min': 'Last name must be at least 2 characters long.',
+            'string.max': 'Last name cannot exceed 50 characters.',
+            'string.pattern.base': 'Last name can only contain letters and spaces.',
+            'any.required': 'Last name is required.'
+          }),
+        email: joi.string()
+          .email()
+          .optional()
+          .allow(null, '')
+          .max(255)
+          .messages({
+            'string.email': 'Please provide a valid email address.',
+            'string.max': 'Email address cannot exceed 255 characters.'
+          }),
+        phone_code: joi.string()
+          .pattern(/^\d{1,4}$/)
           .required()
           .messages({
-            "string.empty": "Password is required.",
-            "string.min": "Password must be at least 8 characters long.",
-            "string.pattern.base":
-              "Password must contain at least one uppercase letter, one number, and one special character.",
+            'string.empty': 'Phone code is required.',
+            'string.pattern.base': 'Phone code must be 1-4 digits.',
+            'any.required': 'Phone code is required.'
           }),
-        gender: joi.number().valid(1, 2, 3).required(),
-        terms_and_condition: joi.number().valid(1).required(),
+        phone_number: joi.string()
+          .pattern(/^\d{6,15}$/)
+          .required()
+          .messages({
+            'string.empty': 'Phone number is required.',
+            'string.pattern.base': 'Phone number must be 6-15 digits.',
+            'any.required': 'Phone number is required.'
+          }),
+        password: joi.string()
+          .required()
+          .min(8)
+          .max(128)
+          .pattern(new RegExp('^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$'))
+          .messages({
+            'string.empty': 'Password is required.',
+            'string.min': 'Password must be at least 8 characters long.',
+            'string.max': 'Password cannot exceed 128 characters.',
+            'string.pattern.base': 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&).',
+            'any.required': 'Password is required.'
+          }),
+        gender: joi.number()
+          .valid(1, 2, 3)
+          .required()
+          .messages({
+            'number.base': 'Gender must be a number.',
+            'any.only': 'Gender must be 1 (Male), 2 (Female), or 3 (Other).',
+            'any.required': 'Gender is required.'
+          }),
+        terms_and_condition: joi.number()
+          .valid(1)
+          .required()
+          .messages({
+            'number.base': 'Terms and conditions acceptance must be a number.',
+            'any.only': 'You must accept the terms and conditions to proceed.',
+            'any.required': 'Terms and conditions acceptance is required.'
+          })
       };
 
       // Validate request body against schema
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
-        return response.validationError("invalid request", res, errors[0]);
+        return response.validationError("Validation failed", res, {
+          details: errors,
+          field_count: errors.length
+        });
       }
 
       // Check if phone number already exists in users table (since providers are now linked to users)
-      const db = require("../../../startup/model");
-      let existingUser = await db.models.User.findOne({
-        where: {
-          phone_code: req.body.phone_code,
-          phone_number: req.body.phone_number,
-        },
-      });
+      try {
+        const db = require("../../../startup/model");
+        let existingUser = await db.models.User.findOne({
+          where: {
+            phone_code: req.body.phone_code,
+            phone_number: req.body.phone_number,
+          },
+        });
 
-      if (existingUser) {
-        if (existingUser.verified_at) {
-          return response.badRequest(
-            "Phone number already exists and is verified. Please use the login endpoint.",
-            res
-          );
-        } else {
-          return response.badRequest(
-            "Phone number already exists but not verified. Please complete verification or use resend OTP.",
-            res
-          );
+        if (existingUser) {
+          if (existingUser.verified_at) {
+            return response.conflict(
+              "Phone number already exists and is verified. Please use the login endpoint.",
+              res
+            );
+          } else {
+            return response.conflict(
+              "Phone number already exists but not verified. Please complete verification or use resend OTP.",
+              res
+            );
+          }
+        }
+      } catch (dbError) {
+        console.error('Phone number check error:', dbError);
+        return response.exception('Error checking phone number availability', res);
+      }
+
+      // Check if email already exists (only if email is provided)
+      if (req.body.email && req.body.email.trim()) {
+        try {
+          const db = require("../../../startup/model");
+          let existingEmailUser = await db.models.User.findOne({
+            where: { email: req.body.email.trim().toLowerCase() },
+          });
+          if (existingEmailUser) {
+            return response.conflict("Email address already exists.", res);
+          }
+        } catch (dbError) {
+          console.error('Email check error:', dbError);
+          return response.exception('Error checking email availability', res);
         }
       }
 
-      // Check if email already exists
+      // Sanitize email if provided
       if (req.body.email) {
-        let existingEmailUser = await db.models.User.findOne({
-          where: { email: req.body.email },
-        });
-        if (existingEmailUser) {
-          return response.badRequest("Email address already exists.", res);
-        }
+        req.body.email = req.body.email.trim().toLowerCase();
       }
 
       next();
     } catch (err) {
-      console.error("Validation Error: ", err);
-      return response.exception("Server error occurred", res);
+      console.error("Provider registration validation error:", err);
+      return response.exception("Server error occurred during validation", res);
     }
   }
 
@@ -182,7 +255,6 @@ module.exports = class ProviderValidator {
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
         return response.validationError("Validation failed", res, {
-          error_code: 'VALIDATION_ERROR',
           details: errors[0]
         });
       }
@@ -224,7 +296,6 @@ module.exports = class ProviderValidator {
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
         return response.validationError("Validation failed", res, {
-          error_code: 'VALIDATION_ERROR',
           details: errors[0]
         });
       }
@@ -265,7 +336,6 @@ module.exports = class ProviderValidator {
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
         return response.validationError("Validation failed", res, {
-          error_code: 'VALIDATION_ERROR',
           details: errors[0]
         });
       }
@@ -534,7 +604,6 @@ module.exports = class ProviderValidator {
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
         return response.validationError("Validation failed", res, {
-          error_code: 'VALIDATION_ERROR',
           details: errors[0]
         });
       }
@@ -549,10 +618,7 @@ module.exports = class ProviderValidator {
         },
       });
       if (!user) {
-        return response.validationError("Provider account not found", res, {
-          error_code: 'PROVIDER_NOT_FOUND',
-          message: 'No provider account found with this phone number'
-        });
+        return response.validationError("No provider account found with this phone number", res);
       }
 
       next();
@@ -623,17 +689,13 @@ module.exports = class ProviderValidator {
       const providerIdErrors = await joiHelper.joiValidation({ provider_id: req.params.provider_id }, { provider_id: providerIdSchema });
       if (providerIdErrors) {
         return response.validationError("Invalid provider ID", res, {
-          error_code: 'INVALID_PROVIDER_ID',
           details: providerIdErrors[0]
         });
       }
 
       // Check if request body exists
       if (!req.body || Object.keys(req.body).length === 0) {
-        return response.validationError("Request body is required", res, {
-          error_code: 'MISSING_REQUEST_BODY',
-          message: 'Request body must contain approval action'
-        });
+        return response.validationError("Request body must contain approval action", res);
       }
 
       // Define validation schema for request body (without provider_id)
@@ -659,8 +721,8 @@ module.exports = class ProviderValidator {
       let bodyErrors = await joiHelper.joiValidation(req.body, bodySchema);
       if (bodyErrors) {
         return response.validationError("Validation failed", res, {
-          error_code: 'VALIDATION_ERROR',
-          details: bodyErrors[0]
+          details: bodyErrors,
+          field_count: bodyErrors.length
         });
       }
 
@@ -669,10 +731,7 @@ module.exports = class ProviderValidator {
       const provider = await db.models.ServiceProvider.findByPk(req.params.provider_id);
       
       if (!provider) {
-        return response.notFound("Provider not found", res, {
-          error_code: 'PROVIDER_NOT_FOUND',
-          message: 'No provider found with the specified ID'
-        });
+        return response.notFound("No provider found with the specified ID", res);
       }
 
       next();
@@ -693,10 +752,7 @@ module.exports = class ProviderValidator {
     try {
       // Check if request body exists
       if (!req.body || Object.keys(req.body).length === 0) {
-        return response.validationError("Request body is required", res, {
-          error_code: 'MISSING_REQUEST_BODY',
-          message: 'Request body must contain provider_id and status'
-        });
+        return response.validationError("Request body must contain provider_id and status", res);
       }
 
       // Define validation schema for request body
@@ -718,8 +774,8 @@ module.exports = class ProviderValidator {
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
         return response.validationError("Validation failed", res, {
-          error_code: 'VALIDATION_ERROR',
-          details: errors[0]
+          details: errors,
+          field_count: errors.length
         });
       }
 
@@ -728,10 +784,7 @@ module.exports = class ProviderValidator {
       const provider = await db.models.ServiceProvider.findByPk(req.body.provider_id);
       
       if (!provider) {
-        return response.notFound("Provider not found", res, {
-          error_code: 'PROVIDER_NOT_FOUND',
-          message: 'No provider found with the specified ID'
-        });
+        return response.notFound("No provider found with the specified ID", res);
       }
 
       next();
@@ -842,7 +895,6 @@ module.exports = class ProviderValidator {
       let errors = await joiHelper.joiValidation(req.body, schema);
       if (errors) {
         return response.validationError("Invalid update data", res, {
-          error_code: 'VALIDATION_ERROR',
           message: errors[0],
           field: errors[0].path ? errors[0].path[0] : 'unknown'
         });
@@ -850,10 +902,7 @@ module.exports = class ProviderValidator {
 
       // Validate that at least one field is provided
       if (!req.body || Object.keys(req.body).length === 0) {
-        return response.badRequest("No update data provided", res, {
-          error_code: 'MISSING_UPDATE_DATA',
-          message: 'Please provide at least one field to update'
-        });
+        return response.badRequest("No update data provided", res);
       }
 
       next();
