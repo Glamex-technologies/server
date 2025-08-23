@@ -366,6 +366,58 @@ module.exports = class UserValidator {
     }
 
     /**
+     * Validates user profile update request
+     * Allows users to update their own profile fields
+     */
+    async updateUserProfile(req, res, next) {
+        console.log('UserValidator@updateUserProfile');
+        try {
+            // Define comprehensive validation schema for updating user profile
+            let schema = {
+                // User fields
+                first_name: joi.string().min(2).max(50).optional(),
+                last_name: joi.string().min(2).max(50).optional(),
+                full_name: joi.string().min(2).max(100).optional(),
+                email: joi.string().email().optional(),
+                gender: joi.number().valid(1, 2, 3).optional(), // 1 = male, 2 = female, 3 = other
+                profile_image: joi.string().uri().optional(),
+                notification: joi.number().valid(0, 1).optional(),
+                fcm_token: joi.string().optional(),
+                
+                // Address fields
+                address: joi.string().max(500).optional(),
+                latitude: joi.number().min(-90).max(90).optional(),
+                longitude: joi.number().min(-180).max(180).optional(),
+                country_id: joi.number().min(1).optional(),
+                city_id: joi.number().min(1).optional(),
+            };
+
+            // Validate request body against schema
+            let errors = await joiHelper.joiValidation(req.body, schema);
+            if (errors) {
+                return response.validationError("Invalid update data", res, {
+                    error_code: 'VALIDATION_ERROR',
+                    message: errors[0],
+                    field: errors[0].path ? errors[0].path[0] : 'unknown'
+                });
+            }
+
+            // Validate that at least one field is provided
+            if (!req.body || Object.keys(req.body).length === 0) {
+                return response.badRequest("No update data provided", res, {
+                    error_code: 'MISSING_UPDATE_DATA',
+                    message: 'Please provide at least one field to update'
+                });
+            }
+
+            next();
+        } catch (err) {
+            console.error("Validation Error: ", err);
+            return response.exception("Server error occurred", res);
+        }
+    }
+
+    /**
      * Validates password change request
      * Checks old password, new password requirements, and password confirmation
      */

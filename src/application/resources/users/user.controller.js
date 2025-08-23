@@ -1163,4 +1163,180 @@ module.exports = class UserController {
       return response.exception("Failed to retrieve user profile data", res);
     }
   }
+
+  /**
+   * Update user profile (for authenticated users)
+   * Allows users to update their own profile fields similar to provider module
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @returns {Object} JSON response with updated user data
+   */
+  async updateUserProfile(req, res) {
+    console.log("UserController@updateUserProfile");
+    const updateData = req.body;
+    const user = req.user;
+
+    try {
+      // Validate that update data is provided
+      if (!updateData || Object.keys(updateData).length === 0) {
+        return response.badRequest("Update data is required", res, {
+          error_code: "MISSING_UPDATE_DATA",
+          message: "Please provide the fields you want to update",
+        });
+      }
+
+      // Separate fields for each model
+      const userFields = {};
+      const addressFields = {};
+
+      // Define allowed fields for each model
+      const allowedUserFields = [
+        "first_name",
+        "last_name",
+        "full_name",
+        "email",
+        "gender",
+        "profile_image",
+        "notification",
+        "fcm_token",
+      ];
+
+      const allowedAddressFields = [
+        "address",
+        "latitude",
+        "longitude",
+        "country_id",
+        "city_id",
+      ];
+
+      // Categorize fields
+      Object.keys(updateData).forEach((key) => {
+        if (allowedUserFields.includes(key)) {
+          userFields[key] = updateData[key];
+        } else if (allowedAddressFields.includes(key)) {
+          addressFields[key] = updateData[key];
+        }
+      });
+
+      // Validate that at least one valid field is provided
+      if (
+        Object.keys(userFields).length === 0 &&
+        Object.keys(addressFields).length === 0
+      ) {
+        return response.badRequest("No valid fields provided for update", res, {
+          error_code: "INVALID_FIELDS",
+          message: "Please provide valid fields to update",
+          allowed_fields: {
+            user: allowedUserFields,
+            address: allowedAddressFields,
+          },
+        });
+      }
+
+      // Handle full_name update if first_name or last_name is updated
+      if (userFields.first_name || userFields.last_name) {
+        const currentUser = await userResources.findOne({ id: user.id });
+        const firstName = userFields.first_name || currentUser.first_name;
+        const lastName = userFields.last_name || currentUser.last_name;
+        userFields.full_name = `${firstName} ${lastName}`;
+      }
+
+      // Update User model if user fields are provided
+      if (Object.keys(userFields).length > 0) {
+        await userResources.updateUser(userFields, { id: user.id });
+        console.log("User fields updated:", Object.keys(userFields));
+      }
+
+      // Update address if address fields are provided
+      if (Object.keys(addressFields).length > 0) {
+        let userAddress = await UserAddress.findOne({
+          where: { user_id: user.id },
+        });
+
+        if (userAddress) {
+          await userAddress.update(addressFields);
+        } else {
+          // Create new address record
+          await UserAddress.create({
+            user_id: user.id,
+            ...addressFields,
+          });
+        }
+        console.log("Address fields updated:", Object.keys(addressFields));
+      }
+
+      // Get updated data for response
+      const updatedUser = await userResources.findOne({ id: user.id });
+      const updatedAddress = await UserAddress.findOne({
+        where: { user_id: user.id },
+        include: [
+          {
+            model: db.models.Country,
+            as: "country",
+            attributes: ["id", "name"],
+          },
+          {
+            model: db.models.City,
+            as: "city",
+            attributes: ["id", "name"],
+          },
+        ],
+      });
+
+      // Prepare response data
+      const responseData = {
+        user: {
+          id: updatedUser.id,
+          first_name: updatedUser.first_name,
+          last_name: updatedUser.last_name,
+          full_name: updatedUser.full_name,
+          email: updatedUser.email,
+          phone_code: updatedUser.phone_code,
+          phone_number: updatedUser.phone_number,
+          gender: updatedUser.gender,
+          is_verified: updatedUser.is_verified,
+          verified_at: updatedUser.verified_at,
+          profile_image: updatedUser.profile_image,
+          status: updatedUser.status,
+          notification: updatedUser.notification,
+          fcm_token: updatedUser.fcm_token,
+        },
+        address: updatedAddress
+          ? {
+              id: updatedAddress.id,
+              address: updatedAddress.address,
+              latitude: updatedAddress.latitude,
+              longitude: updatedAddress.longitude,
+              country_id: updatedAddress.country_id,
+              city_id: updatedAddress.city_id,
+              country: updatedAddress.country
+                ? {
+                    id: updatedAddress.country.id,
+                    name: updatedAddress.country.name,
+                  }
+                : null,
+              city: updatedAddress.city
+                ? {
+                    id: updatedAddress.city.id,
+                    name: updatedAddress.city.name,
+                  }
+                : null,
+            }
+          : null,
+        updated_fields: {
+          user: Object.keys(userFields),
+          address: Object.keys(addressFields),
+        },
+      };
+
+      return response.success(
+        "User profile updated successfully",
+        res,
+        responseData
+      );
+    } catch (error) {
+      console.error("Error updating user profile:", error);
+      return response.exception("Failed to update user profile", res);
+    }
+  }
 };
