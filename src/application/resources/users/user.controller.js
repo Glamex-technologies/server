@@ -4,6 +4,7 @@ const UserResources = require("./user.resources");
 const ResponseHelper = require("../../helpers/response.helpers");
 const { genrateToken } = require("../../helpers/jwtToken.helpers");
 const db = require("../../../startup/model");
+const User = db.models.User;
 const OtpVerification = db.models.OtpVerification;
 const UserAddress = db.models.UserAddress;
 const userResources = new UserResources();
@@ -586,16 +587,18 @@ module.exports = class UserController {
     return response.success("Password updated successfully", res, null);
   }
 
-  // Get all users with pagination, search, and filters
+  // Get all users with pagination, search, and filters - Following provider module structure
   async getAllUsers(req, res) {
-    console.log("ProviderController@getAllUsers");
+    console.log("UserController@getAllUsers");
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const sortBy = req.query.sortBy || "created_at";
     const sortOrder = req.query.sortOrder || "DESC";
-    const { search, type, status } = req.query;
-    // Build query for search and filters
-    const query = {
+    const { search, status } = req.query;
+
+    // Build query for User table
+    const userQuery = {
+      user_type: "user", // Only get regular users, not providers
       ...(search && {
         [Op.or]: [
           { first_name: { [Op.like]: `%${search}%` } },
@@ -609,36 +612,137 @@ module.exports = class UserController {
           [Op.like]: `%${status}%`,
         },
       }),
-      is_verified: 1,
     };
-    const attributes = [
-      "id",
-      "first_name",
-      "last_name",
-      "full_name",
-      "type",
-      "phone_code",
-      "status",
-      "profile_image",
-      "phone_number",
-      "email",
-      "gender",
-      "is_verified",
-      "created_at",
-    ];
+
     try {
-      const providers = await userResources.getAllWithPagination(
-        query,
-        attributes,
-        sortBy,
-        sortOrder,
-        page,
-        limit
+      // Get users with pagination
+      const offset = (page - 1) * limit;
+      
+      const usersResult = await User.findAndCountAll({
+        where: userQuery,
+        limit: limit,
+        offset: offset,
+        order: [[sortBy, sortOrder]],
+        attributes: [
+          "id",
+          "first_name",
+          "last_name",
+          "full_name",
+          "email",
+          "phone_code",
+          "phone_number",
+          "gender",
+          "is_verified",
+          "verified_at",
+          "profile_image",
+          "status",
+          "notification",
+          "created_at",
+          "updated_at",
+        ],
+      });
+
+      // Get comprehensive data for each user
+      const formattedUsers = await Promise.all(
+        usersResult.rows.map(async (user) => {
+          // Get address details
+          let addressDetails = null;
+          try {
+            const address = await UserAddress.findOne({
+              where: { user_id: user.id },
+              include: [
+                {
+                  model: db.models.Country,
+                  as: "country",
+                  attributes: ["id", "name"],
+                },
+                {
+                  model: db.models.City,
+                  as: "city",
+                  attributes: ["id", "name"],
+                },
+              ],
+            });
+
+            if (address) {
+              addressDetails = {
+                id: address.id,
+                address: address.address,
+                latitude: address.latitude,
+                longitude: address.longitude,
+                country_id: address.country_id,
+                city_id: address.city_id,
+                country: address.country
+                  ? {
+                      id: address.country.id,
+                      name: address.country.name,
+                    }
+                  : null,
+                city: address.city
+                  ? {
+                      id: address.city.id,
+                      name: address.city.name,
+                    }
+                  : null,
+              };
+            }
+          } catch (addressError) {
+            console.log("Address not found or error:", addressError.message);
+            addressDetails = null;
+          }
+
+          // Return comprehensive user data
+          return {
+            id: user.id,
+            // User details
+            first_name: user.first_name,
+            last_name: user.last_name,
+            full_name: user.full_name,
+            email: user.email,
+            phone_code: user.phone_code,
+            phone_number: user.phone_number,
+            gender: user.gender,
+            is_verified: user.is_verified,
+            verified_at: user.verified_at,
+            profile_image: user.profile_image,
+            status: user.status,
+            notification: user.notification,
+            created_at: user.created_at,
+            updated_at: user.updated_at,
+            // Related data
+            address: addressDetails,
+          };
+        })
       );
-      return response.success("Providers fetched successfully", res, providers);
+
+      // Prepare response data
+      const totalPages = Math.ceil(usersResult.count / limit);
+      const responseData = {
+        users: formattedUsers,
+        totalRecords: usersResult.count,
+        pagination: {
+          currentPage: page,
+          perPage: limit,
+          totalPages,
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
+        },
+        query: {
+          search: search || null,
+          status: status || null,
+          sortBy,
+          sortOrder,
+        }
+      };
+
+      return response.success(
+        "Users list retrieved successfully",
+        res,
+        responseData
+      );
     } catch (error) {
-      console.error("Error fetching providers:", error);
-      return response.exception("Error fetching users", res);
+      console.error("Error fetching users:", error);
+      return response.exception("Failed to retrieve users list", res);
     }
   }
 
@@ -656,105 +760,372 @@ module.exports = class UserController {
     return response.success("File uploaded successfully", res, result);
   }
 
-  // Get user details by user_id
+  // Get user details by user_id - Following provider module structure
   async getUser(req, res) {
     console.log("UserController@getUser");
-    const data = req.query;
-    let user = await userResources.getAllDetails({ id: data.user_id });
-    if (!user) {
-      return response.badRequest("User not found", res, false);
+    const userId = parseInt(req.params.user_id);
+
+    try {
+      // Find the user by ID
+      const user = await User.findByPk(userId);
+
+      if (!user) {
+        return response.badRequest("User account not found", res, false);
+      }
+
+      // Get address details
+      let addressDetails = null;
+      try {
+        const address = await UserAddress.findOne({
+          where: { user_id: user.id },
+          include: [
+            {
+              model: db.models.Country,
+              as: "country",
+              attributes: ["id", "name"],
+            },
+            {
+              model: db.models.City,
+              as: "city",
+              attributes: ["id", "name"],
+            },
+          ],
+        });
+
+        if (address) {
+          addressDetails = {
+            id: address.id,
+            address: address.address,
+            latitude: address.latitude,
+            longitude: address.longitude,
+            country_id: address.country_id,
+            city_id: address.city_id,
+            country: address.country
+              ? {
+                  id: address.country.id,
+                  name: address.country.name,
+                }
+              : null,
+            city: address.city
+              ? {
+                  id: address.city.id,
+                  name: address.city.name,
+                }
+              : null,
+          };
+        }
+      } catch (addressError) {
+        console.log("Address not found or error:", addressError.message);
+        addressDetails = null;
+      }
+
+      // Return comprehensive user data (same structure as getAllUsers)
+      const userData = {
+        id: user.id,
+        // User details
+        first_name: user.first_name,
+        last_name: user.last_name,
+        full_name: user.full_name,
+        email: user.email,
+        phone_code: user.phone_code,
+        phone_number: user.phone_number,
+        gender: user.gender,
+        is_verified: user.is_verified,
+        verified_at: user.verified_at,
+        profile_image: user.profile_image,
+        status: user.status,
+        notification: user.notification,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        // Related data
+        address: addressDetails,
+      };
+
+      return response.success(
+        "User details retrieved successfully",
+        res,
+        userData
+      );
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      return response.exception("Failed to retrieve user details", res);
     }
-    
-    // Get user address information
-    const userAddress = await UserAddress.findOne({
-      where: { user_id: user.id }
-    });
-    
-    const result = {
-      id: user.id,
-      first_name: user.first_name,
-      last_name: user.last_name,
-      full_name: user.full_name,
-      email: user.email,
-      phone_code: user.phone_code,
-      phone_number: user.phone_number,
-      profile_image: user.profile_image,
-      status: user.status,
-      gender: user.gender,
-      country_id: userAddress?.country_id || null,
-      city_id: userAddress?.city_id || null,
-      address: userAddress?.address || null,
-      latitude: userAddress?.latitude || null,
-      longitude: userAddress?.longitude || null,
-      created_at: user.created_at,
-    };
-    return response.success("User fetched successfully", res, result);
   }
 
-  // Update user profile
+  // Update user profile by admin - Following updateUserProfile logic
   async updateUser(req, res) {
     console.log("UserController@updateUser");
+    const updateData = req.body;
+    const userId = parseInt(req.params.user_id);
+
     try {
-      const data = req.body;
-      // Find the user
-      let user = await userResources.findOne({ id: data.user_id });
+      // Find the user by ID
+      const user = await db.models.User.findByPk(userId);
       if (!user) {
-        return response.badRequest("User not found", res, false);
+        return response.badRequest("User not found", res, {
+          error_code: "USER_NOT_FOUND",
+          message: "The specified user does not exist",
+        });
       }
-      // Remove user_id to prevent updating it
-      const { user_id, country_id, city_id, ...updateData } = data;
-      
-      // Only include valid keys for user update
+
+      // Validate that update data is provided
+      if (!updateData || Object.keys(updateData).length === 0) {
+        return response.badRequest("Update data is required", res, {
+          error_code: "MISSING_UPDATE_DATA",
+          message: "Please provide the fields you want to update",
+        });
+      }
+
+      // Separate fields for each model
+      const userFields = {};
+      const addressFields = {};
+
+      // Define allowed fields for each model
       const allowedUserFields = [
         "first_name",
         "last_name",
+        "full_name",
         "email",
+        "gender",
         "profile_image",
         "status",
-        "gender",
+        "notification",
+        "fcm_token",
       ];
-      const finalUserUpdateData = {};
-      for (const key of allowedUserFields) {
-        if (key in updateData) {
-          // includes keys with null values too
-          finalUserUpdateData[key] = updateData[key];
+
+      const allowedAddressFields = [
+        "address",
+        "latitude",
+        "longitude",
+        "country_id",
+        "city_id",
+      ];
+
+      // Categorize fields
+      Object.keys(updateData).forEach((key) => {
+        if (allowedUserFields.includes(key)) {
+          userFields[key] = updateData[key];
+        } else if (allowedAddressFields.includes(key)) {
+          addressFields[key] = updateData[key];
         }
-      }
-      
-      // Update the user
-      await userResources.updateUser(finalUserUpdateData, {
-        id: data.user_id,
       });
-      
-      // Update address information if provided
-      if (country_id !== undefined || city_id !== undefined) {
-        const userAddress = await UserAddress.findOne({
-          where: { user_id: data.user_id }
+
+      // Validate that at least one valid field is provided
+      if (
+        Object.keys(userFields).length === 0 &&
+        Object.keys(addressFields).length === 0
+      ) {
+        return response.badRequest("No valid fields provided for update", res, {
+          error_code: "INVALID_FIELDS",
+          message: "Please provide valid fields to update",
+          allowed_fields: {
+            user: allowedUserFields,
+            address: allowedAddressFields,
+          },
         });
-        
+      }
+
+      // Handle full_name update if first_name or last_name is updated
+      if (userFields.first_name || userFields.last_name) {
+        const firstName = userFields.first_name || user.first_name;
+        const lastName = userFields.last_name || user.last_name;
+        userFields.full_name = `${firstName} ${lastName}`;
+      }
+
+      // Update User model if user fields are provided
+      if (Object.keys(userFields).length > 0) {
+        await userResources.updateUser(userFields, { id: userId });
+        console.log("User fields updated:", Object.keys(userFields));
+      }
+
+      // Update address if address fields are provided
+      if (Object.keys(addressFields).length > 0) {
+        let userAddress = await UserAddress.findOne({
+          where: { user_id: userId },
+        });
+
         if (userAddress) {
-          // Update existing address record
-          const addressUpdateData = {};
-          if (country_id !== undefined) addressUpdateData.country_id = country_id;
-          if (city_id !== undefined) addressUpdateData.city_id = city_id;
-          
-          await userAddress.update(addressUpdateData);
+          await userAddress.update(addressFields);
         } else {
           // Create new address record
           await UserAddress.create({
-            user_id: data.user_id,
-            country_id: country_id || null,
-            city_id: city_id || null,
-            address: null,
-            latitude: null,
-            longitude: null,
+            user_id: userId,
+            ...addressFields,
           });
         }
+        console.log("Address fields updated:", Object.keys(addressFields));
       }
-      
-      return response.success("User updated successfully", res);
+
+      // Get updated data for response
+      const updatedUser = await userResources.findOne({ id: userId });
+      const updatedAddress = await UserAddress.findOne({
+        where: { user_id: userId },
+        include: [
+          {
+            model: db.models.Country,
+            as: "country",
+            attributes: ["id", "name"],
+          },
+          {
+            model: db.models.City,
+            as: "city",
+            attributes: ["id", "name"],
+          },
+        ],
+      });
+
+      // Prepare response data
+      const responseData = {
+        user: {
+          id: updatedUser.id,
+          first_name: updatedUser.first_name,
+          last_name: updatedUser.last_name,
+          full_name: updatedUser.full_name,
+          email: updatedUser.email,
+          phone_code: updatedUser.phone_code,
+          phone_number: updatedUser.phone_number,
+          gender: updatedUser.gender,
+          is_verified: updatedUser.is_verified,
+          verified_at: updatedUser.verified_at,
+          profile_image: updatedUser.profile_image,
+          status: updatedUser.status,
+          notification: updatedUser.notification,
+          fcm_token: updatedUser.fcm_token,
+        },
+        address: updatedAddress
+          ? {
+              id: updatedAddress.id,
+              address: updatedAddress.address,
+              latitude: updatedAddress.latitude,
+              longitude: updatedAddress.longitude,
+              country_id: updatedAddress.country_id,
+              city_id: updatedAddress.city_id,
+              country: updatedAddress.country
+                ? {
+                    id: updatedAddress.country.id,
+                    name: updatedAddress.country.name,
+                  }
+                : null,
+              city: updatedAddress.city
+                ? {
+                    id: updatedAddress.city.id,
+                    name: updatedAddress.city.name,
+                  }
+                : null,
+            }
+          : null,
+        updated_fields: {
+          user: Object.keys(userFields),
+          address: Object.keys(addressFields),
+        },
+      };
+
+      return response.success(
+        "User updated successfully",
+        res,
+        responseData
+      );
     } catch (error) {
       console.error("Error in updateUser:", error);
+      return response.exception("Server error occurred", res);
+    }
+  }
+
+  // Delete user account by admin - Following deleteMyAccount logic
+  async deleteUser(req, res) {
+    console.log("UserController@deleteUser");
+    const userId = parseInt(req.params.user_id);
+
+    try {
+      // Find the user by ID
+      const user = await User.findByPk(userId);
+      if (!user) {
+        return response.badRequest("User not found", res, {
+          error_code: "USER_NOT_FOUND",
+          message: "The specified user does not exist",
+        });
+      }
+
+      // Start transaction for atomic operations
+      const transaction = await db.sequelize.transaction();
+
+      try {
+        // Soft delete user address records
+        await UserAddress.update(
+          { deleted_at: new Date() },
+          {
+            where: { user_id: userId },
+            transaction,
+          }
+        );
+
+        // Soft delete user account
+        await userResources.updateUser(
+          {
+            status: 0,
+            notification: 0,
+            deleted_at: new Date(),
+          },
+          { id: userId },
+          transaction
+        );
+
+        // Invalidate all tokens for this user (if token model exists)
+        try {
+          if (db.models.Token) {
+            await db.models.Token.update(
+              {
+                is_active: 0,
+                deleted_at: new Date(),
+              },
+              {
+                where: { user_id: userId },
+                transaction,
+              }
+            );
+          }
+        } catch (tokenError) {
+          console.log(
+            "Token invalidation skipped (Token model may not exist):",
+            tokenError.message
+          );
+        }
+
+        // Commit transaction
+        await transaction.commit();
+
+        // Log deletion for audit purposes
+        console.log(`User account deletion by admin completed:`, {
+          user_id: userId,
+          email: user.email,
+          phone: user.phone_number,
+          deleted_at: new Date().toISOString(),
+        });
+
+        return response.success(
+          "User account has been deleted successfully",
+          res,
+          {
+            message: "Account deletion completed",
+            user_id: userId,
+            deletion_timestamp: new Date().toISOString(),
+            note: "User account has been soft deleted successfully by admin.",
+          }
+        );
+      } catch (transactionError) {
+        // Rollback transaction on error
+        await transaction.rollback();
+        console.error(
+          "Transaction error during account deletion:",
+          transactionError
+        );
+        return response.exception(
+          "Failed to delete user account. Please try again.",
+          res
+        );
+      }
+    } catch (error) {
+      console.error("Error in deleteUser:", error);
       return response.exception("Server error occurred", res);
     }
   }

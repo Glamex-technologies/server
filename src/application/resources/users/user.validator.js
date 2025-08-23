@@ -292,22 +292,27 @@ module.exports = class UserValidator {
      * Supports pagination, sorting and filtering
      */
     async getAllUsers(req, res, next) {
-        console.log('ProviderValidator@getAllUsers');
+        console.log('UserValidator@getAllUsers');
         try {
             let schema = {
-                page: joi.number().optional(),
-                limit: joi.number().optional(),
+                // Pagination parameters
+                page: joi.number().min(1).default(1),
+                limit: joi.number().min(1).max(100).default(10), // Max 100 records per page
+                
+                // Filter parameters
                 status: joi.number().valid(1, 2, 3).optional(),
-                country: joi.number().optional(),
-                city: joi.number().optional(),
-                search: joi.string().optional(),
-                sortBy: joi.string().valid('first_name', 'last_name', 'created_at', 'status').default('created_at'),
+                search: joi.string().max(100).optional(),
+                
+                // Sorting parameters
+                sortBy: joi.string().valid('first_name', 'last_name', 'email', 'created_at', 'status', 'is_verified').default('created_at'),
                 sortOrder: joi.string().valid('DESC', 'ASC').default('DESC')
             }
+            
             let errors = await joiHelper.joiValidation(req.query, schema);
             if (errors) {
                 return response.validationError('invalid request', res, errors[0])
             }
+            
             next();
         } catch (err) {
             console.error('Validation Error: ', err);
@@ -317,7 +322,7 @@ module.exports = class UserValidator {
 
     /**
      * Validates get single user request
-     * Checks user ID exists
+     * Checks user ID exists in params
      */
     async getUser(req, res, next) {
         console.log('UserValidator@getUser');
@@ -325,7 +330,7 @@ module.exports = class UserValidator {
             let schema = {
                 user_id: joi.number().required().min(1)
             }
-            let errors = await joiHelper.joiValidation(req.query, schema);
+            let errors = await joiHelper.joiValidation(req.params, schema);
             if (errors) {
                 return response.validationError('invalid request', res, errors[0])
             }
@@ -337,26 +342,43 @@ module.exports = class UserValidator {
     }
 
     /**
-     * Validates user update request
-     * Checks all updatable fields
+     * Validates user update request by admin
+     * Checks user ID in params and updatable fields in body
      */
     async updateUser(req, res, next) {
         console.log('UserValidator@updateUser');
         try {
-            let schema = {
-                user_id: joi.number().required().min(1),
-                first_name: joi.string().optional(),
-                last_name: joi.string().optional(),
-                email: joi.string().email().optional().allow(null),
+            // Validate user_id in params
+            let paramsSchema = {
+                user_id: joi.number().required().min(1)
+            }
+            let paramsErrors = await joiHelper.joiValidation(req.params, paramsSchema);
+            if (paramsErrors) {
+                return response.validationError('invalid user_id', res, paramsErrors[0])
+            }
+
+            // Validate update fields in body
+            let bodySchema = {
+                first_name: joi.string().min(2).max(50).optional(),
+                last_name: joi.string().min(2).max(50).optional(),
+                full_name: joi.string().min(2).max(100).optional(),
+                email: joi.string().email().optional(),
+                gender: joi.number().valid(1, 2, 3).optional(), // 1 = male, 2 = female, 3 = other
+                profile_image: joi.string().uri().optional(),
+                status: joi.number().valid(1, 2, 3).optional(), // 1 active 2 inactive 3 block
+                notification: joi.number().valid(0, 1).optional(),
+                fcm_token: joi.string().optional(),
+                
+                // Address fields
+                address: joi.string().max(500).optional(),
+                latitude: joi.number().min(-90).max(90).optional(),
+                longitude: joi.number().min(-180).max(180).optional(),
                 country_id: joi.number().min(1).optional(),
                 city_id: joi.number().min(1).optional(),
-                profile_image: joi.string().optional().allow(null),
-                status: joi.number().valid(1, 2, 3).optional(), // 1 active 2 inactive 3 block
-                gender: joi.number().valid(1, 2, 3).optional() // 1 active 2 inactive 3 block
             }
-            let errors = await joiHelper.joiValidation(req.body, schema);
-            if (errors) {
-                return response.validationError('invalid request', res, errors[0])
+            let bodyErrors = await joiHelper.joiValidation(req.body, bodySchema);
+            if (bodyErrors) {
+                return response.validationError('invalid update data', res, bodyErrors[0])
             }
             next();
         } catch (err) {
@@ -485,6 +507,27 @@ module.exports = class UserValidator {
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
                 return response.validationError('invalid request', res, errors[0])
+            }
+            next();
+        } catch (err) {
+            console.error('Validation Error: ', err);
+            return response.exception('Server error occurred', res);
+        }
+    }
+
+    /**
+     * Validates user deletion request by admin
+     * Checks user ID exists in params
+     */
+    async deleteUser(req, res, next) {
+        console.log('UserValidator@deleteUser');
+        try {
+            let schema = {
+                user_id: joi.number().required().min(1)
+            }
+            let errors = await joiHelper.joiValidation(req.params, schema);
+            if (errors) {
+                return response.validationError('invalid user_id', res, errors[0])
             }
             next();
         } catch (err) {

@@ -87,7 +87,7 @@ module.exports = {
       status: {
         type: Sequelize.TINYINT,
         allowNull: false,
-        defaultValue: 1, // 1 = Active, 0 = Inactive
+        defaultValue: 1, // 1 = Active, 0 = Inactive, 2 = Banned
       },
 
       notification: {
