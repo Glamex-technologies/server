@@ -10,6 +10,9 @@ const fs = require("fs");
 const models = require("./startup/model");
 const routes = require("./startup/router");
 
+// Import error handling middleware
+const ErrorHandlerMiddleware = require("./application/middlewares/errorHandler.middleware");
+
 const app = express();
 
 // CORS configuration
@@ -19,8 +22,22 @@ app.use(cors({
   allowedHeaders: '*'
 }));
 
-// Body parsers
-app.use(express.json({ limit: "16kb" }));
+// Body parsers with error handling
+app.use(express.json({ 
+  limit: "16kb",
+  verify: (req, res, buf) => {
+    try {
+      JSON.parse(buf);
+    } catch (e) {
+      res.status(400).json({
+        status: "error",
+        message: "Invalid JSON format",
+        error_code: "INVALID_JSON"
+      });
+      throw new Error('Invalid JSON');
+    }
+  }
+}));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 
 // Static folder
@@ -40,15 +57,19 @@ app.get("/", (req, res) => {
   });
 });
 
-// Basic error handler middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ 
-    status: "error", 
-    message: "Something went wrong!",
-    error: process.env.NODE_ENV === 'development' ? err.message : {}
-  });
-});
+// Comprehensive error handling middleware (in order of specificity)
+app.use(ErrorHandlerMiddleware.handleJsonParsingError);
+app.use(ErrorHandlerMiddleware.handleMulterError);
+app.use(ErrorHandlerMiddleware.handleValidationError);
+app.use(ErrorHandlerMiddleware.handleDatabaseError);
+app.use(ErrorHandlerMiddleware.handleJwtError);
+app.use(ErrorHandlerMiddleware.handleRateLimitError);
+
+// 404 handler for undefined routes
+app.use(ErrorHandlerMiddleware.handleNotFound);
+
+// Generic error handler (must be last)
+app.use(ErrorHandlerMiddleware.handleGenericError);
 
 const PORT = process.env.PORT || 8080;
 

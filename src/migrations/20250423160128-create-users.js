@@ -83,7 +83,6 @@ module.exports = {
       },
       
 
-
       status: {
         type: Sequelize.TINYINT,
         allowNull: false,
@@ -117,6 +116,24 @@ module.exports = {
         allowNull: false,
         defaultValue: Sequelize.literal("CURRENT_TIMESTAMP"),
       },
+    });
+
+    // Add unique constraints
+    await queryInterface.addConstraint('users', {
+      fields: ['phone_code', 'phone_number'],
+      type: 'unique',
+      name: 'unique_phone_number_constraint'
+    });
+
+    await queryInterface.addConstraint('users', {
+      fields: ['email'],
+      type: 'unique',
+      name: 'unique_email_constraint',
+      where: {
+        email: {
+          [Sequelize.Op.ne]: null
+        }
+      }
     });
   },
 

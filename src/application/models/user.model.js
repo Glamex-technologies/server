@@ -114,6 +114,16 @@ module.exports = (sequelize, DataTypes) => {
           unique: true,
           fields: ['phone_code', 'phone_number'],
           name: 'unique_phone_number_constraint'
+        },
+        {
+          unique: true,
+          fields: ['email'],
+          name: 'unique_email_constraint',
+          where: {
+            email: {
+              [sequelize.Sequelize.Op.ne]: null
+            }
+          }
         }
       ]
     }

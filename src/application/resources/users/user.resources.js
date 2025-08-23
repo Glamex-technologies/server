@@ -104,16 +104,16 @@ module.exports = class UserResources {
       // Calculate total pages
       const totalPages = Math.ceil(result.count / limit);
       // Count users by status
-      const [activeCount, inactiveCount, blockedCount] = await Promise.all([
+      const [activeCount, inactiveCount, bannedCount] = await Promise.all([
         User.count({ where: { ...query, status: 1 } }),
+        User.count({ where: { ...query, status: 0 } }),
         User.count({ where: { ...query, status: 2 } }),
-        User.count({ where: { ...query, status: 3 } }),
       ]);
       return {
         users: result.rows,
         active_users: activeCount,
-        in_active_users: inactiveCount,
-        blocked_users: blockedCount,
+        inactive_users: inactiveCount,
+        banned_users: bannedCount,
         total_users: result.count,
         pagination: {
           totalRecords: result.count,

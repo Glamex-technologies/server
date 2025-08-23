@@ -82,12 +82,16 @@ module.exports = class ResponseHelper {
         
         // Only add error_code for error responses (4xx, 5xx)
         if (!success) {
-            const errorCode = this.getErrorCode(code);
+            // Check if data contains a custom error_code
+            const customErrorCode = data && data.error_code;
+            const errorCode = customErrorCode || this.getErrorCode(code);
             responseBody.error_code = errorCode;
         }
         
         if (data) {
-            responseBody.data = data;
+            // Remove error_code from data if it exists to avoid duplication
+            const { error_code, ...dataWithoutErrorCode } = data;
+            responseBody.data = dataWithoutErrorCode;
         }
         
         return res.status(code).send(responseBody);

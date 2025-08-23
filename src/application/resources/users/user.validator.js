@@ -33,7 +33,15 @@ module.exports = class UserValidator {
                 return response.validationError("Invalid password", res, false);
             }
             if (user.status !== 1) {
-                return response.validationError("Your account is not active", res, false);
+                let statusMessage;
+                if (user.status === 0) {
+                    statusMessage = "Your account is inactive. Please contact support for assistance.";
+                } else if (user.status === 2) {
+                    statusMessage = "Your account has been banned. Please contact support for more information.";
+                } else {
+                    statusMessage = "Your account is not active. Please contact support for assistance.";
+                }
+                return response.validationError(statusMessage, res, false);
             }
             req.user = user;
             next();
@@ -50,53 +58,193 @@ module.exports = class UserValidator {
     async register(req, res, next) {
         console.log('UserValidator@register');
         try {
+            // Enhanced validation schema with comprehensive field validation
             let schema = {
-                first_name: joi.string().required(),
-                last_name: joi.string().required(),
-                email: joi.string().email().optional().allow(null),
-                phone_code: joi.string().pattern(/^\d+$/).required(),
-                phone_number: joi.string().pattern(/^\d+$/).required(),
-                country_id: joi.number().min(1).required(),
-                city_id: joi.number().min(1).required(),
-                address: joi.string().required().min(5).max(500).messages({
-                    'string.empty': 'Address is required.',
-                    'string.min': 'Address must be at least 5 characters long.',
-                    'string.max': 'Address cannot exceed 500 characters.',
-                }),
-                password: joi.string().required().min(8).pattern(new RegExp('^(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$')).required().messages({
-                    'string.empty': 'Password is required.',
-                    'string.min': 'Password must be at least 8 characters long.',
-                    'string.pattern.base': 'Password must contain at least one uppercase letter, one number, and one special character.',
-                }),
-                gender: joi.number().valid(1, 2, 3).required(),
-                terms_and_condition: joi.number().valid(1).required(),
-            }
+                first_name: joi.string()
+                    .required()
+                    .min(2)
+                    .max(50)
+                    .pattern(/^[a-zA-Z\s]+$/)
+                    .messages({
+                        'string.empty': 'First name is required.',
+                        'string.min': 'First name must be at least 2 characters long.',
+                        'string.max': 'First name cannot exceed 50 characters.',
+                        'string.pattern.base': 'First name can only contain letters and spaces.',
+                        'any.required': 'First name is required.'
+                    }),
+                last_name: joi.string()
+                    .required()
+                    .min(2)
+                    .max(50)
+                    .pattern(/^[a-zA-Z\s]+$/)
+                    .messages({
+                        'string.empty': 'Last name is required.',
+                        'string.min': 'Last name must be at least 2 characters long.',
+                        'string.max': 'Last name cannot exceed 50 characters.',
+                        'string.pattern.base': 'Last name can only contain letters and spaces.',
+                        'any.required': 'Last name is required.'
+                    }),
+                email: joi.string()
+                    .email()
+                    .optional()
+                    .allow(null, '')
+                    .max(255)
+                    .messages({
+                        'string.email': 'Please provide a valid email address.',
+                        'string.max': 'Email address cannot exceed 255 characters.'
+                    }),
+                phone_code: joi.string()
+                    .pattern(/^\d{1,4}$/)
+                    .required()
+                    .messages({
+                        'string.empty': 'Phone code is required.',
+                        'string.pattern.base': 'Phone code must be 1-4 digits.',
+                        'any.required': 'Phone code is required.'
+                    }),
+                phone_number: joi.string()
+                    .pattern(/^\d{6,15}$/)
+                    .required()
+                    .messages({
+                        'string.empty': 'Phone number is required.',
+                        'string.pattern.base': 'Phone number must be 6-15 digits.',
+                        'any.required': 'Phone number is required.'
+                    }),
+                country_id: joi.number()
+                    .integer()
+                    .min(1)
+                    .required()
+                    .messages({
+                        'number.base': 'Country ID must be a number.',
+                        'number.integer': 'Country ID must be an integer.',
+                        'number.min': 'Country ID must be greater than 0.',
+                        'any.required': 'Country ID is required.'
+                    }),
+                city_id: joi.number()
+                    .integer()
+                    .min(1)
+                    .required()
+                    .messages({
+                        'number.base': 'City ID must be a number.',
+                        'number.integer': 'City ID must be an integer.',
+                        'number.min': 'City ID must be greater than 0.',
+                        'any.required': 'City ID is required.'
+                    }),
+                address: joi.string()
+                    .required()
+                    .min(5)
+                    .max(500)
+                    .trim()
+                    .messages({
+                        'string.empty': 'Address is required.',
+                        'string.min': 'Address must be at least 5 characters long.',
+                        'string.max': 'Address cannot exceed 500 characters.',
+                        'any.required': 'Address is required.'
+                    }),
+                password: joi.string()
+                    .required()
+                    .min(8)
+                    .max(128)
+                    .pattern(new RegExp('^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[@$!%*?&])[A-Za-z\\d@$!%*?&]{8,}$'))
+                    .messages({
+                        'string.empty': 'Password is required.',
+                        'string.min': 'Password must be at least 8 characters long.',
+                        'string.max': 'Password cannot exceed 128 characters.',
+                        'string.pattern.base': 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&).',
+                        'any.required': 'Password is required.'
+                    }),
+                gender: joi.number()
+                    .valid(1, 2, 3)
+                    .required()
+                    .messages({
+                        'number.base': 'Gender must be a number.',
+                        'any.only': 'Gender must be 1 (Male), 2 (Female), or 3 (Other).',
+                        'any.required': 'Gender is required.'
+                    }),
+                terms_and_condition: joi.number()
+                    .valid(1)
+                    .required()
+                    .messages({
+                        'number.base': 'Terms and conditions acceptance must be a number.',
+                        'any.only': 'You must accept the terms and conditions to proceed.',
+                        'any.required': 'Terms and conditions acceptance is required.'
+                    })
+            };
 
+            // Validate request body against schema
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
-                return response.validationError('invalid request', res, errors[0])
+                return response.validationError('Validation failed', res, {
+                    details: errors,
+                    field_count: errors.length
+                });
             }
-            // Check if phone number already exists
-            let existingUser = await userResources.findOne({ phone_code: req.body.phone_code, phone_number: req.body.phone_number });
-            if (existingUser) {
-                if (existingUser.verified_at) {
-                    return response.badRequest('Phone number already exists and is verified. Please use the login endpoint.', res);
-                } else {
-                    return response.badRequest('Phone number already exists but not verified. Please complete verification or use resend OTP.', res);
+
+            // Validate country and city exist and are active
+            try {
+                const db = require("../../../startup/model");
+                
+                if (req.body.country_id) {
+                    const country = await db.models.Country.findByPk(req.body.country_id);
+                    if (!country || country.status !== 1) {
+                        return response.validationError('Invalid country selected', res);
+                    }
                 }
+
+                if (req.body.city_id) {
+                    const city = await db.models.City.findByPk(req.body.city_id);
+                    if (!city || city.status !== 1) {
+                        return response.validationError('Invalid city selected', res);
+                    }
+                }
+            } catch (dbError) {
+                console.error('Database validation error:', dbError);
+                return response.exception('Error validating location data', res);
+            }
+
+            // Check if phone number already exists
+            try {
+                let existingUser = await userResources.findOne({ 
+                    phone_code: req.body.phone_code, 
+                    phone_number: req.body.phone_number 
+                });
+                
+                if (existingUser) {
+                    if (existingUser.verified_at) {
+                        return response.conflict('Phone number already exists and is verified. Please use the login endpoint.', res);
+                    } else {
+                        return response.conflict('Phone number already exists but not verified. Please complete verification or use resend OTP.', res);
+                    }
+                }
+            } catch (dbError) {
+                console.error('Phone number check error:', dbError);
+                return response.exception('Error checking phone number availability', res);
             }
             
-            // Check if email already exists
-            if (req.body.email) {
-                let existingEmailUser = await userResources.findOne({ email: req.body.email });
-                if (existingEmailUser) {
-                    return response.badRequest('Email address already exists.', res);
+            // Check if email already exists (only if email is provided)
+            if (req.body.email && req.body.email.trim()) {
+                try {
+                    let existingEmailUser = await userResources.findOne({ 
+                        email: req.body.email.trim().toLowerCase() 
+                    });
+                    
+                    if (existingEmailUser) {
+                        return response.conflict('Email address already exists.', res);
+                    }
+                } catch (dbError) {
+                    console.error('Email check error:', dbError);
+                    return response.exception('Error checking email availability', res);
                 }
             }
+
+            // Sanitize email if provided
+            if (req.body.email) {
+                req.body.email = req.body.email.trim().toLowerCase();
+            }
+
             next();
         } catch (err) {
-            console.error('Validation Error: ', err);
-            return response.exception('Server error occurred', res);
+            console.error('User registration validation error:', err);
+            return response.exception('Server error occurred during validation', res);
         }
     }
 
@@ -129,7 +277,6 @@ module.exports = class UserValidator {
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
                 return response.validationError('Validation failed', res, {
-                    error_code: 'VALIDATION_ERROR',
                     details: errors[0]
                 });
             }
@@ -165,7 +312,6 @@ module.exports = class UserValidator {
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
                 return response.validationError('Validation failed', res, {
-                    error_code: 'VALIDATION_ERROR',
                     details: errors[0]
                 });
             }
@@ -200,7 +346,6 @@ module.exports = class UserValidator {
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
                 return response.validationError('Validation failed', res, {
-                    error_code: 'VALIDATION_ERROR',
                     details: errors[0]
                 });
             }
@@ -264,7 +409,6 @@ module.exports = class UserValidator {
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
                 return response.validationError('Validation failed', res, {
-                    error_code: 'VALIDATION_ERROR',
                     details: errors[0]
                 });
             }
@@ -275,10 +419,7 @@ module.exports = class UserValidator {
                 phone_number: req.body.phone_number 
             });
             if (!user) {
-                return response.validationError('User not found', res, {
-                    error_code: 'USER_NOT_FOUND',
-                    message: 'No user account found with this phone number'
-                });
+                return response.validationError('No user account found with this phone number', res);
             }
             next();
         } catch (err) {
@@ -365,7 +506,7 @@ module.exports = class UserValidator {
                 email: joi.string().email().optional(),
                 gender: joi.number().valid(1, 2, 3).optional(), // 1 = male, 2 = female, 3 = other
                 profile_image: joi.string().uri().optional(),
-                status: joi.number().valid(1, 2, 3).optional(), // 1 active 2 inactive 3 block
+                status: joi.number().valid(0, 1, 2).optional(), // 0 = Inactive, 1 = Active, 2 = Banned
                 notification: joi.number().valid(0, 1).optional(),
                 fcm_token: joi.string().optional(),
                 
@@ -418,7 +559,6 @@ module.exports = class UserValidator {
             let errors = await joiHelper.joiValidation(req.body, schema);
             if (errors) {
                 return response.validationError("Invalid update data", res, {
-                    error_code: 'VALIDATION_ERROR',
                     message: errors[0],
                     field: errors[0].path ? errors[0].path[0] : 'unknown'
                 });
@@ -426,10 +566,7 @@ module.exports = class UserValidator {
 
             // Validate that at least one field is provided
             if (!req.body || Object.keys(req.body).length === 0) {
-                return response.badRequest("No update data provided", res, {
-                    error_code: 'MISSING_UPDATE_DATA',
-                    message: 'Please provide at least one field to update'
-                });
+                return response.badRequest("No update data provided", res);
             }
 
             next();

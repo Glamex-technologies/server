@@ -55,63 +55,152 @@ module.exports = class ProviderController {
     const hashedPassword = bcrypt.hashSync(data.password, 10);
 
     try {
-      // Step 1: Create user with user_type: 'provider' (NO ServiceProvider yet)
-      const userData = {
-        first_name: data.first_name,
-        last_name: data.last_name,
-        full_name: data.first_name + " " + data.last_name,
-        user_type: "provider",
-        email: data.email,
-        phone_code: data.phone_code,
-        phone_number: data.phone_number,
-        password: hashedPassword,
-        terms_and_condition: data.terms_and_condition || 1,
-        gender: data.gender,
-        is_verified: 0,
-        status: 1, // User account is active by default
-      };
+      // Get database instance for transaction
+      const db = require('../../../startup/model');
+      const transaction = await db.sequelize.transaction();
 
-      const user = await User.create(userData);
-
-      // Note: Address record will be created later during onboarding process
-
-      // Step 2: Create OTP using the user's phone number (not provider ID)
       try {
-        const otpRecord = await OtpVerification.createForEntity(
-          "provider",
-          user.id,
-          data.phone_code + data.phone_number,
-          "registration"
-        );
-        console.log("Provider User OTP created:", {
-          otp_code: otpRecord.otp_code,
-          expires_at: otpRecord.expires_at,
+        // Double-check uniqueness within transaction to prevent race conditions
+        const existingUser = await db.models.User.findOne({
+          where: {
+            phone_code: data.phone_code,
+            phone_number: data.phone_number,
+          },
+          transaction: transaction
         });
-      } catch (error) {
-        console.error("Error creating provider user OTP:", error);
+
+        if (existingUser) {
+          await transaction.rollback();
+          if (existingUser.verified_at) {
+            return response.conflict("Phone number already exists and is verified. Please use the login endpoint.", res);
+          } else {
+            return response.conflict("Phone number already exists but not verified. Please complete verification or use resend OTP.", res);
+          }
+        }
+
+        // Check email uniqueness if provided
+        if (data.email && data.email.trim()) {
+          const existingEmailUser = await db.models.User.findOne({
+            where: { email: data.email.trim().toLowerCase() },
+            transaction: transaction
+          });
+
+          if (existingEmailUser) {
+            await transaction.rollback();
+            return response.conflict("Email address already exists.", res);
+          }
+        }
+
+        // Step 1: Create user with user_type: 'provider' (NO ServiceProvider yet)
+        const userData = {
+          first_name: data.first_name,
+          last_name: data.last_name,
+          full_name: data.first_name + " " + data.last_name,
+          user_type: "provider",
+          email: data.email ? data.email.trim().toLowerCase() : null,
+          phone_code: data.phone_code,
+          phone_number: data.phone_number,
+          password: hashedPassword,
+          terms_and_condition: data.terms_and_condition || 1,
+          gender: data.gender,
+          is_verified: 0,
+          status: 1, // User account is active by default
+        };
+
+        let user;
+        try {
+          user = await db.models.User.create(userData, { transaction: transaction });
+        } catch (createError) {
+          await transaction.rollback();
+          console.error("Error creating provider user:", createError);
+          
+          // Handle specific database errors
+          if (createError.name === 'SequelizeUniqueConstraintError') {
+            console.log("Unique constraint error details:", {
+              fields: createError.fields,
+              errors: createError.errors
+            });
+            
+            // Check which field violated the unique constraint
+            if (createError.fields && createError.fields.phone_number) {
+              return response.conflict("Phone number already exists. Please use a different phone number or try logging in.", res);
+            }
+            if (createError.fields && createError.fields.email) {
+              return response.conflict("Email address already exists. Please use a different email address or try logging in.", res);
+            }
+            
+            // Check errors array for more specific information
+            if (createError.errors && createError.errors.length > 0) {
+              const error = createError.errors[0];
+              if (error.path === 'phone_number') {
+                return response.conflict("Phone number already exists. Please use a different phone number or try logging in.", res);
+              }
+              if (error.path === 'email') {
+                return response.conflict("Email address already exists. Please use a different email address or try logging in.", res);
+              }
+            }
+            
+            return response.conflict("Account with this information already exists. Please try logging in.", res);
+          }
+          
+          // Handle other database errors
+          if (createError.name && createError.name.startsWith('Sequelize')) {
+            console.error("Sequelize error:", createError);
+            return response.badRequest("Invalid data provided. Please check your information and try again.", res);
+          }
+          
+          console.error("Unexpected error during provider user creation:", createError);
+          throw createError; // Re-throw for outer catch block
+        }
+
+              // Note: Address record will be created later during onboarding process
+
+        // Step 2: Create OTP using the user's phone number (not provider ID)
+        try {
+          const otpRecord = await OtpVerification.createForEntity(
+            "provider",
+            user.id,
+            data.phone_code + data.phone_number,
+            "registration"
+          );
+          console.log("Provider User OTP created:", {
+            otp_code: otpRecord.otp_code,
+            expires_at: otpRecord.expires_at,
+          });
+        } catch (error) {
+          console.error("Error creating provider user OTP:", error);
+        }
+
+        // Commit the transaction
+        await transaction.commit();
+
+        const result = {
+          user_id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          verified_at: user.verified_at,
+          is_verified: user.is_verified,
+          user_type: user.user_type,
+          status: user.status,
+          notification: user.notification,
+        };
+
+        return response.success(
+          "Account created successfully! Please verify your phone number with the OTP sent to your registered mobile number.",
+          res,
+          result
+        );
+      } catch (transactionError) {
+        // Rollback transaction on any error
+        await transaction.rollback();
+        console.error("Transaction error:", transactionError);
+        throw transactionError; // Re-throw to be caught by outer catch
       }
-
-      const result = {
-        user_id: user.id,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        full_name: user.full_name,
-        email: user.email,
-        phone_code: user.phone_code,
-        phone_number: user.phone_number,
-        gender: user.gender,
-        verified_at: user.verified_at,
-        is_verified: user.is_verified,
-        user_type: user.user_type,
-        status: user.status,
-        notification: user.notification,
-      };
-
-      return response.success(
-        "Account created successfully! Please verify your phone number with the OTP sent to your registered mobile number.",
-        res,
-        result
-      );
     } catch (error) {
       console.error("Error in provider registration:", error);
       return response.exception(error.message, res);
@@ -133,11 +222,7 @@ module.exports = class ProviderController {
       ) {
         return response.badRequest(
           "Invalid otp_type. Must be one of: signup, login, forgot_password",
-          res,
-          {
-            error_code: "INVALID_OTP_TYPE",
-            message: "Please provide a valid OTP type",
-          }
+          res
         );
       }
 
@@ -151,10 +236,7 @@ module.exports = class ProviderController {
       });
 
       if (!user) {
-        return response.notFound("Provider user account not found", res, {
-          error_code: "PROVIDER_NOT_FOUND",
-          message: "No provider account found with this phone number",
-        });
+        return response.notFound("Provider user account not found", res);
       }
 
       // Map otp_type to purpose
@@ -185,21 +267,11 @@ module.exports = class ProviderController {
       if (!verificationResult.success) {
         // Enhanced error handling with specific status codes
         if (verificationResult.message === "OTP not found or expired") {
-          return response.unauthorized("OTP has expired or is invalid", res, {
-            error_code: "OTP_EXPIRED",
-            message:
-              "The OTP has expired or is invalid. Please request a new one using the resend OTP functionality.",
-          });
+          return response.unauthorized("OTP has expired or is invalid. Please request a new one using the resend OTP functionality.", res);
         } else if (verificationResult.message === "Too many failed attempts") {
-          return response.forbidden("Too many failed OTP attempts", res, {
-            error_code: "TOO_MANY_ATTEMPTS",
-            message: "Too many failed attempts. Please request a new OTP.",
-          });
+          return response.forbidden("Too many failed attempts. Please request a new OTP.", res);
         } else {
-          return response.unauthorized("Invalid OTP", res, {
-            error_code: "INVALID_OTP",
-            message: "The OTP you entered is incorrect.",
-          });
+          return response.unauthorized("The OTP you entered is incorrect.", res);
         }
       }
 
@@ -357,11 +429,7 @@ module.exports = class ProviderController {
       ) {
         return response.badRequest(
           "Invalid otp_type. Must be one of: signup, login, forgot_password",
-          res,
-          {
-            error_code: "INVALID_OTP_TYPE",
-            message: "Please provide a valid OTP type",
-          }
+          res
         );
       }
 
@@ -375,10 +443,7 @@ module.exports = class ProviderController {
       });
 
       if (!user) {
-        return response.notFound("Provider user account not found", res, {
-          error_code: "PROVIDER_NOT_FOUND",
-          message: "No provider account found with this phone number",
-        });
+        return response.notFound("Provider user account not found", res);
       }
 
       // Map otp_type to purpose
@@ -405,10 +470,7 @@ module.exports = class ProviderController {
 
         if (recentOtps >= 3) {
           return response.custom(429, "Too many OTP requests", res, {
-            error_code: "RATE_LIMIT_EXCEEDED",
-            message:
-              "You have exceeded the maximum OTP requests. Please try again later.",
-            retry_after: 3600, // 1 hour in seconds
+            retry_after: 3600 // 1 hour in seconds
           });
         }
       } catch (error) {
@@ -463,11 +525,7 @@ module.exports = class ProviderController {
 
       // Check if user account is active
       if (user.status !== 1) {
-        return response.forbidden("Your account is not active", res, {
-          error_code: "ACCOUNT_INACTIVE",
-          message:
-            "Your account has been deactivated. Please contact support for assistance.",
-        });
+        return response.forbidden("Your account is not active", res);
       }
 
       // Check if user is verified
@@ -601,8 +659,8 @@ module.exports = class ProviderController {
         };
 
         const accessToken = await genrateToken(userObj);
-        return response.validationError(
-          "Please complete your profile setup first",
+        return response.success(
+          "Login successful. Please complete your profile setup.",
           res,
           {
             access_token: accessToken,
@@ -783,8 +841,7 @@ module.exports = class ProviderController {
     if (!user) {
       return response.badRequest(
         "No provider account found with this phone number",
-        res,
-        false
+        res
       );
     }
 
@@ -830,10 +887,7 @@ module.exports = class ProviderController {
     });
 
     if (!user) {
-      return response.badRequest("Provider account not found", res, {
-        error_code: "PROVIDER_NOT_FOUND",
-        message: "No provider account found with this phone number",
-      });
+      return response.badRequest("Provider account not found", res);
     }
 
     // Update password directly in user table
@@ -2273,10 +2327,7 @@ module.exports = class ProviderController {
 
     // Check if request body exists and has required fields
     if (!req.body || Object.keys(req.body).length === 0) {
-      return response.badRequest("Request body is required", res, {
-        error_code: "MISSING_REQUEST_BODY",
-        message: "Request body must contain approval action",
-      });
+      return response.badRequest("Request body is required", res);
     }
 
     const data = req.body;
@@ -2284,11 +2335,7 @@ module.exports = class ProviderController {
 
     // Validate that approve field exists
     if (!data.hasOwnProperty("approve")) {
-      return response.badRequest("Approval action is required", res, {
-        error_code: "MISSING_APPROVAL_ACTION",
-        message:
-          "Request body must contain approve field (1 for approve, 2 for reject)",
-      });
+      return response.badRequest("Approval action is required", res);
     }
 
     try {
@@ -2312,21 +2359,14 @@ module.exports = class ProviderController {
       });
 
       if (!serviceProvider) {
-        return response.notFound("Provider account not found", res, {
-          error_code: "PROVIDER_NOT_FOUND",
-          message: "No provider found with the specified ID",
-        });
+        return response.notFound("Provider account not found", res);
       }
 
       // Validate approval action
       if (![1, 2].includes(data.approve)) {
         return response.badRequest(
           "Invalid approval action. Use 1 for approve or 2 for reject",
-          res,
-          {
-            error_code: "INVALID_APPROVAL_ACTION",
-            message: "Approval action must be 1 (approve) or 2 (reject)",
-          }
+          res
         );
       }
 
@@ -2337,11 +2377,7 @@ module.exports = class ProviderController {
       ) {
         return response.badRequest(
           "Rejection reason is required when rejecting a provider profile",
-          res,
-          {
-            error_code: "REJECTION_REASON_REQUIRED",
-            message: "Please provide a reason for rejection",
-          }
+          res
         );
       }
 
@@ -2436,10 +2472,7 @@ module.exports = class ProviderController {
       // Validate that user exists in request
       if (!req.user) {
         console.error("❌ No user found in request");
-        return response.unauthorized("User not authenticated", res, {
-          error_code: "USER_NOT_FOUND",
-          message: "User authentication required",
-        });
+        return response.unauthorized("User not authenticated", res);
       }
 
       const provider = req.provider;
@@ -2447,11 +2480,7 @@ module.exports = class ProviderController {
       // If no provider record exists, return error response as per industry standards
       if (!provider) {
         console.log("❌ Provider profile not found for user:", user.id);
-        return response.notFound("Provider profile not found", res, {
-          error_code: "PROVIDER_PROFILE_NOT_FOUND",
-          message:
-            "Provider profile has not been created yet. Please complete your profile setup.",
-        });
+        return response.notFound("Provider profile not found", res);
       }
 
       // Get basic provider details first (without includes to avoid association errors)
@@ -2706,21 +2735,14 @@ module.exports = class ProviderController {
       }
 
       if (status === undefined || status === null) {
-        return response.badRequest("Status is required", res, {
-          error_code: "MISSING_STATUS",
-          message: "Status must be provided (1 for active, 0 for inactive)",
-        });
+        return response.badRequest("Status is required", res);
       }
 
       // Validate status value
       if (![0, 1].includes(status)) {
         return response.badRequest(
           "Invalid status value. Use 1 for active or 0 for inactive",
-          res,
-          {
-            error_code: "INVALID_STATUS_VALUE",
-            message: "Status must be 1 (active) or 0 (inactive)",
-          }
+          res
         );
       }
 
@@ -2745,18 +2767,12 @@ module.exports = class ProviderController {
       });
 
       if (!provider) {
-        return response.notFound("Provider account not found", res, {
-          error_code: "PROVIDER_NOT_FOUND",
-          message: "No provider found with the specified ID",
-        });
+        return response.notFound("Provider account not found", res);
       }
 
       // Check if user exists
       if (!provider.user) {
-        return response.notFound("User account not found", res, {
-          error_code: "USER_NOT_FOUND",
-          message: "User account associated with this provider not found",
-        });
+        return response.notFound("User account not found", res);
       }
 
       // Update user status (this controls authentication)
@@ -3061,10 +3077,7 @@ module.exports = class ProviderController {
     try {
       // Validate that update data is provided
       if (!updateData || Object.keys(updateData).length === 0) {
-        return response.badRequest("Update data is required", res, {
-          error_code: "MISSING_UPDATE_DATA",
-          message: "Please provide the fields you want to update",
-        });
+        return response.badRequest("Update data is required", res);
       }
 
       // Separate fields for each model
@@ -3142,18 +3155,7 @@ module.exports = class ProviderController {
         Object.keys(availabilityFields).length === 0 &&
         Object.keys(serviceListFields).length === 0
       ) {
-        return response.badRequest("No valid fields provided for update", res, {
-          error_code: "INVALID_FIELDS",
-          message: "Please provide valid fields to update",
-          allowed_fields: {
-            user: allowedUserFields,
-            provider: allowedProviderFields,
-            address: allowedAddressFields,
-            bank: allowedBankFields,
-            availability: allowedAvailabilityFields,
-            service_list: allowedServiceListFields,
-          },
-        });
+        return response.badRequest("No valid fields provided for update", res);
       }
 
       // Handle full_name update if first_name or last_name is updated
@@ -3272,10 +3274,7 @@ module.exports = class ProviderController {
           });
 
           if (errors.length > 0) {
-            return response.badRequest(errors.join(", "), res, {
-              error_code: "AVAILABILITY_VALIDATION_ERROR",
-              message: "Invalid availability data provided",
-            });
+            return response.badRequest(errors.join(", "), res);
           }
 
           // Delete existing availability records for this provider
@@ -3351,10 +3350,7 @@ module.exports = class ProviderController {
           });
 
           if (errors.length > 0) {
-            return response.badRequest(errors.join(", "), res, {
-              error_code: "SERVICE_LIST_VALIDATION_ERROR",
-              message: "Invalid service list data provided",
-            });
+            return response.badRequest(errors.join(", "), res);
           }
 
           // Update each service list item
@@ -3919,11 +3915,7 @@ module.exports = class ProviderController {
       if (!isMatch) {
         return response.unauthorized(
           "Current password is incorrect",
-          res,
-          {
-            error_code: "INVALID_CURRENT_PASSWORD",
-            message: "The current password you entered is incorrect"
-          }
+          res
         );
       }
 
@@ -3977,21 +3969,14 @@ module.exports = class ProviderController {
       if (!password) {
         return response.badRequest(
           "Password is required for account deletion",
-          res,
-          {
-            error_code: "PASSWORD_REQUIRED",
-            message: "Please provide your password to confirm account deletion",
-          }
+          res
         );
       }
 
       // Verify password
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
-        return response.unauthorized("Incorrect password", res, {
-          error_code: "INVALID_PASSWORD",
-          message: "The password you entered is incorrect",
-        });
+        return response.unauthorized("Incorrect password", res);
       }
 
       // Start transaction for atomic operations
@@ -4207,9 +4192,12 @@ module.exports = class ProviderController {
       }
 
       // Validate provider status before allowing availability toggle
-      if (!provider.is_approved) {
+      if (provider.is_approved !== 1) {
+        const statusMessage = provider.is_approved === 0 
+          ? "Provider account is not approved yet." 
+          : "Provider account has been rejected. Please contact admin for approval.";
         return response.validationError(
-          "Cannot toggle availability. Provider account is not approved yet.",
+          `Cannot toggle availability. ${statusMessage}`,
           res,
           false
         );
@@ -5381,10 +5369,7 @@ module.exports = class ProviderController {
       // Validate that user exists in request
       if (!req.user) {
         console.error("❌ No user found in request");
-        return response.unauthorized("User not authenticated", res, {
-          error_code: "USER_NOT_FOUND",
-          message: "User authentication required",
-        });
+        return response.unauthorized("User not authenticated", res);
       }
 
       const user = req.user;

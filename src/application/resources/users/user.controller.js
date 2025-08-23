@@ -21,88 +21,185 @@ module.exports = class UserController {
   // Register a new user
   async register(req, res) {
     console.log("UserController@register");
-    const data = req.body;
-    const hashedPassword = bcrypt.hashSync(data.password, 10);
-
-    // Prepare user object for creation
-    const userObj = {
-      first_name: data.first_name,
-      last_name: data.last_name,
-      full_name: data.first_name + " " + data.last_name,
-      user_type: "user",
-      email: data.email,
-      phone_code: data.phone_code,
-      phone_number: data.phone_number,
-      password: hashedPassword,
-      terms_and_condition: 1,
-      gender: data.gender,
-    };
-    console.log("Creating user with data:", {
-      ...userObj,
-      password: "[HIDDEN]",
-    });
-    const user = await userResources.create(userObj);
-    console.log("User created:", { id: user.id });
-
-    // Create address record for the user
+    
     try {
-      const addressObj = {
-        user_id: user.id,
-        country_id: data.country_id,
-        city_id: data.city_id,
-        address: data.address, // Use the address from signup
-        latitude: null, // Will be filled later
-        longitude: null, // Will be filled later
-      };
-      await UserAddress.create(addressObj);
-      console.log("User address created for user:", { id: user.id });
+      const data = req.body;
+      const hashedPassword = bcrypt.hashSync(data.password, 10);
+
+      // Get database instance for transaction
+      const db = require('../../../startup/model');
+      const transaction = await db.sequelize.transaction();
+
+      try {
+        // Double-check uniqueness within transaction to prevent race conditions
+        const existingUser = await db.models.User.findOne({
+          where: {
+            phone_code: data.phone_code,
+            phone_number: data.phone_number,
+          },
+          transaction: transaction
+        });
+
+        if (existingUser) {
+          await transaction.rollback();
+          if (existingUser.verified_at) {
+            return response.conflict("Phone number already exists and is verified. Please use the login endpoint.", res);
+          } else {
+            return response.conflict("Phone number already exists but not verified. Please complete verification or use resend OTP.", res);
+          }
+        }
+
+        // Check email uniqueness if provided
+        if (data.email && data.email.trim()) {
+          const existingEmailUser = await db.models.User.findOne({
+            where: { email: data.email.trim().toLowerCase() },
+            transaction: transaction
+          });
+
+          if (existingEmailUser) {
+            await transaction.rollback();
+            return response.conflict("Email address already exists.", res);
+          }
+        }
+
+        // Prepare user object for creation
+        const userObj = {
+          first_name: data.first_name,
+          last_name: data.last_name,
+          full_name: data.first_name + " " + data.last_name,
+          user_type: "user",
+          email: data.email ? data.email.trim().toLowerCase() : null,
+          phone_code: data.phone_code,
+          phone_number: data.phone_number,
+          password: hashedPassword,
+          terms_and_condition: 1,
+          gender: data.gender,
+        };
+        console.log("Creating user with data:", {
+          ...userObj,
+          password: "[HIDDEN]",
+        });
+
+        let user;
+        try {
+          user = await db.models.User.create(userObj, { transaction: transaction });
+          console.log("User created:", { id: user.id });
+        } catch (createError) {
+          await transaction.rollback();
+          console.error("Error creating user:", createError);
+          
+          // Handle specific database errors
+          if (createError.name === 'SequelizeUniqueConstraintError') {
+            console.log("Unique constraint error details:", {
+              fields: createError.fields,
+              errors: createError.errors
+            });
+            
+            // Check which field violated the unique constraint
+            if (createError.fields && createError.fields.phone_number) {
+              return response.conflict("Phone number already exists. Please use a different phone number or try logging in.", res);
+            }
+            if (createError.fields && createError.fields.email) {
+              return response.conflict("Email address already exists. Please use a different email address or try logging in.", res);
+            }
+            
+            // Check errors array for more specific information
+            if (createError.errors && createError.errors.length > 0) {
+              const error = createError.errors[0];
+              if (error.path === 'phone_number') {
+                return response.conflict("Phone number already exists. Please use a different phone number or try logging in.", res);
+              }
+              if (error.path === 'email') {
+                return response.conflict("Email address already exists. Please use a different email address or try logging in.", res);
+              }
+            }
+            
+            return response.conflict("Account with this information already exists. Please try logging in.", res);
+          }
+          
+          // Handle other database errors
+          if (createError.name && createError.name.startsWith('Sequelize')) {
+            console.error("Sequelize error:", createError);
+            return response.badRequest("Invalid data provided. Please check your information and try again.", res);
+          }
+          
+          console.error("Unexpected error during user creation:", createError);
+          return response.exception("Failed to create user account. Please try again.", res);
+        }
+
+        // Create address record for the user
+        try {
+          const addressObj = {
+            user_id: user.id,
+            country_id: data.country_id,
+            city_id: data.city_id,
+            address: data.address, // Use the address from signup
+            latitude: null, // Will be filled later
+            longitude: null, // Will be filled later
+          };
+          await db.models.UserAddress.create(addressObj, { transaction: transaction });
+          console.log("User address created for user:", { id: user.id });
+        } catch (error) {
+          console.error("Error creating user address:", error);
+          // Continue without failing registration
+        }
+
+        // Create OTP using the new system
+        try {
+          const otpRecord = await OtpVerification.createForEntity(
+            "user",
+            user.id,
+            data.phone_code + data.phone_number,
+            "registration"
+          );
+          console.log("OTP created:", {
+            otp_code: otpRecord.otp_code,
+            expires_at: otpRecord.expires_at,
+          });
+        } catch (error) {
+          console.error("Error creating OTP:", error);
+          // Continue without failing registration
+        }
+
+        // Commit the transaction
+        await transaction.commit();
+
+        // Get user address information for response
+        const userAddress = await db.models.UserAddress.findOne({
+          where: { user_id: user.id }
+        });
+
+        // Prepare response object
+        const result = {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          full_name: user.full_name,
+          user_type: user.user_type,
+          email: user.email,
+          phone_code: user.phone_code,
+          phone_number: user.phone_number,
+          gender: user.gender,
+          country_id: userAddress?.country_id || null,
+          city_id: userAddress?.city_id || null,
+          address: userAddress?.address || null,
+          is_verified: user.is_verified,
+          verified_at: user.verified_at,
+          status: user.status,
+          notification: user.notification,
+        };
+
+        return response.success("Account created successfully! Please verify your phone number with the OTP sent to your registered mobile number.", res, result);
+      } catch (transactionError) {
+        // Rollback transaction on any error
+        await transaction.rollback();
+        console.error("Transaction error:", transactionError);
+        throw transactionError; // Re-throw to be caught by outer catch
+      }
     } catch (error) {
-      console.error("Error creating user address:", error);
-      // Continue without failing registration
+      console.error("Unexpected error in register:", error);
+      return response.exception("An unexpected error occurred during registration. Please try again.", res);
     }
-
-    // Create OTP using the new system
-    try {
-      const otpRecord = await OtpVerification.createForEntity(
-        "user",
-        user.id,
-        data.phone_code + data.phone_number,
-        "registration"
-      );
-      console.log("OTP created:", {
-        otp_code: otpRecord.otp_code,
-        expires_at: otpRecord.expires_at,
-      });
-    } catch (error) {
-      console.error("Error creating OTP:", error);
-      // Continue without failing registration
-    }
-    // Get user address information for response
-    const userAddress = await UserAddress.findOne({
-      where: { user_id: user.id }
-    });
-
-    // Prepare response object
-    const result = {
-      id: user.id,
-      first_name: user.first_name,
-      last_name: user.last_name,
-      full_name: user.full_name,
-      user_type: user.user_type,
-      email: user.email,
-      phone_code: user.phone_code,
-      phone_number: user.phone_number,
-      gender: user.gender,
-      country_id: userAddress?.country_id || null,
-      city_id: userAddress?.city_id || null,
-      address: userAddress?.address || null,
-      is_verified: user.is_verified,
-      verified_at: user.verified_at,
-      status: user.status,
-      notification: user.notification,
-    };
-
-    return response.success("Account created successfully! Please verify your phone number with the OTP sent to your registered mobile number.", res, result);
   }
 
   // Unified OTP verification method for all OTP types
@@ -114,10 +211,7 @@ module.exports = class UserController {
 
       // Validate otp_type
       if (!data.otp_type || !['signup', 'login', 'forgot_password'].includes(data.otp_type)) {
-        return response.badRequest("Invalid otp_type. Must be one of: signup, login, forgot_password", res, {
-          error_code: 'INVALID_OTP_TYPE',
-          message: 'Please provide a valid OTP type'
-        });
+        return response.badRequest("Invalid otp_type. Must be one of: signup, login, forgot_password", res);
       }
 
       // Find user by phone number combination
@@ -127,10 +221,7 @@ module.exports = class UserController {
       });
       
       if (!user) {
-        return response.notFound("User not found with the provided phone number", res, {
-          error_code: 'USER_NOT_FOUND',
-          message: 'No user account found with this phone number'
-        });
+        return response.notFound("User not found with the provided phone number", res);
       }
 
       console.log("User found:", {
@@ -167,20 +258,11 @@ module.exports = class UserController {
       if (!verificationResult.success) {
         // Enhanced error handling with specific status codes
         if (verificationResult.message === 'OTP not found or expired') {
-          return response.unauthorized("OTP has expired or is invalid", res, {
-            error_code: 'OTP_EXPIRED',
-            message: 'The OTP has expired or is invalid. Please request a new one using the resend OTP functionality.'
-          });
+          return response.unauthorized("OTP has expired or is invalid. Please request a new one using the resend OTP functionality.", res);
         } else if (verificationResult.message === 'Too many failed attempts') {
-          return response.forbidden("Too many failed OTP attempts", res, {
-            error_code: 'TOO_MANY_ATTEMPTS',
-            message: 'Too many failed attempts. Please request a new OTP.'
-          });
+          return response.forbidden("Too many failed attempts. Please request a new OTP.", res);
         } else {
-          return response.unauthorized("Invalid OTP", res, {
-            error_code: 'INVALID_OTP',
-            message: 'The OTP you entered is incorrect.'
-          });
+          return response.unauthorized("The OTP you entered is incorrect.", res);
         }
       }
 
@@ -319,10 +401,7 @@ module.exports = class UserController {
     
     // Validate otp_type
     if (!data.otp_type || !['signup', 'login', 'forgot_password'].includes(data.otp_type)) {
-      return response.badRequest("Invalid otp_type. Must be one of: signup, login, forgot_password", res, {
-        error_code: 'INVALID_OTP_TYPE',
-        message: 'Please provide a valid OTP type'
-      });
+      return response.badRequest("Invalid otp_type. Must be one of: signup, login, forgot_password", res);
     }
     
     // Find user by phone number combination
@@ -332,10 +411,7 @@ module.exports = class UserController {
     });
     
     if (!user) {
-      return response.notFound("User not found with the provided phone number", res, {
-        error_code: 'USER_NOT_FOUND',
-        message: 'No user account found with this phone number'
-      });
+      return response.notFound("User not found with the provided phone number", res);
     }
 
     // Map otp_type to purpose
@@ -362,8 +438,6 @@ module.exports = class UserController {
 
       if (recentOtps >= 3) {
         return response.custom(429, "Too many OTP requests", res, {
-          error_code: 'RATE_LIMIT_EXCEEDED',
-          message: 'You have exceeded the maximum OTP requests. Please try again later.',
           retry_after: 3600 // 1 hour in seconds
         });
       }
@@ -458,13 +532,14 @@ module.exports = class UserController {
         address: userAddress?.address || null,
         is_verified: user.is_verified,
       };
-      return response.success(
+      return response.custom(403, 
         "Your account needs to be verified before you can login. OTP has been sent to your registered mobile number for verification.",
         res,
         {
           ...result,
           verification_required: true,
-          otp_type: 'login' // Specify the OTP type for frontend
+          otp_type: 'login', // Specify the OTP type for frontend
+          error_code: "VERIFICATION_REQUIRED"
         }
       );
     }
@@ -571,10 +646,7 @@ module.exports = class UserController {
     });
     
     if (!user) {
-      return response.badRequest("User not found", res, {
-        error_code: 'USER_NOT_FOUND',
-        message: 'No user account found with this phone number'
-      });
+      return response.badRequest("User not found", res);
     }
     
     // Update password
@@ -862,18 +934,12 @@ module.exports = class UserController {
       // Find the user by ID
       const user = await db.models.User.findByPk(userId);
       if (!user) {
-        return response.badRequest("User not found", res, {
-          error_code: "USER_NOT_FOUND",
-          message: "The specified user does not exist",
-        });
+        return response.badRequest("User not found", res);
       }
 
       // Validate that update data is provided
       if (!updateData || Object.keys(updateData).length === 0) {
-        return response.badRequest("Update data is required", res, {
-          error_code: "MISSING_UPDATE_DATA",
-          message: "Please provide the fields you want to update",
-        });
+        return response.badRequest("Update data is required", res);
       }
 
       // Separate fields for each model
@@ -915,14 +981,7 @@ module.exports = class UserController {
         Object.keys(userFields).length === 0 &&
         Object.keys(addressFields).length === 0
       ) {
-        return response.badRequest("No valid fields provided for update", res, {
-          error_code: "INVALID_FIELDS",
-          message: "Please provide valid fields to update",
-          allowed_fields: {
-            user: allowedUserFields,
-            address: allowedAddressFields,
-          },
-        });
+        return response.badRequest("No valid fields provided for update", res);
       }
 
       // Handle full_name update if first_name or last_name is updated
@@ -1040,10 +1099,7 @@ module.exports = class UserController {
       // Find the user by ID
       const user = await User.findByPk(userId);
       if (!user) {
-        return response.badRequest("User not found", res, {
-          error_code: "USER_NOT_FOUND",
-          message: "The specified user does not exist",
-        });
+        return response.badRequest("User not found", res);
       }
 
       // Start transaction for atomic operations
@@ -1144,36 +1200,24 @@ module.exports = class UserController {
       const authHeader = req.headers.authorization;
       if (!authHeader) {
         console.log(`[${logoutId}] ❌ No authorization header provided`);
-        return response.unauthorized("Authentication token is required", res, {
-          error_code: "AUTHENTICATION_REQUIRED",
-          message: "Authentication token is required"
-        });
+        return response.unauthorized("Authentication token is required", res);
       }
 
       if (!authHeader.startsWith("Bearer ")) {
         console.log(`[${logoutId}] ❌ Invalid authorization header format`);
-        return response.unauthorized("Invalid token format", res, {
-          error_code: "INVALID_TOKEN_FORMAT",
-          message: "Invalid token format"
-        });
+        return response.unauthorized("Invalid token format", res);
       }
 
       const token = authHeader.split(" ")[1];
       if (!token || token.trim().length === 0) {
         console.log(`[${logoutId}] ❌ Empty token provided`);
-        return response.unauthorized("Token cannot be empty", res, {
-          error_code: "EMPTY_TOKEN",
-          message: "Token cannot be empty"
-        });
+        return response.unauthorized("Token cannot be empty", res);
       }
 
       // Validate token format (basic JWT structure check)
       if (!this.isValidJWTFormat(token)) {
         console.log(`[${logoutId}] ❌ Invalid JWT token format`);
-        return response.unauthorized("Invalid token format", res, {
-          error_code: "INVALID_TOKEN_FORMAT",
-          message: "Invalid token format"
-        });
+        return response.unauthorized("Invalid token format", res);
       }
 
       // Get user context for audit logging
@@ -1194,10 +1238,7 @@ module.exports = class UserController {
           `[${logoutId}] ❌ Token invalidation failed:`,
           logoutResult.error
         );
-        return response.custom(logoutResult.statusCode, logoutResult.message, res, {
-          error_code: logoutResult.errorCode,
-          message: logoutResult.message
-        });
+        return response.custom(logoutResult.statusCode, logoutResult.message, res);
       }
 
       // Log successful logout
@@ -1307,11 +1348,7 @@ module.exports = class UserController {
       if (!isMatch) {
         return response.unauthorized(
           "Current password is incorrect",
-          res,
-          {
-            error_code: "INVALID_CURRENT_PASSWORD",
-            message: "The current password you entered is incorrect"
-          }
+          res
         );
       }
 
@@ -1358,21 +1395,14 @@ module.exports = class UserController {
       if (!password) {
         return response.badRequest(
           "Password is required for account deletion",
-          res,
-          {
-            error_code: "PASSWORD_REQUIRED",
-            message: "Please provide your password to confirm account deletion",
-          }
+          res
         );
       }
 
       // Verify password
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
-        return response.unauthorized("Incorrect password", res, {
-          error_code: "INVALID_PASSWORD",
-          message: "The password you entered is incorrect",
-        });
+        return response.unauthorized("Incorrect password", res);
       }
 
       // Start transaction for atomic operations
@@ -1550,10 +1580,7 @@ module.exports = class UserController {
     try {
       // Validate that update data is provided
       if (!updateData || Object.keys(updateData).length === 0) {
-        return response.badRequest("Update data is required", res, {
-          error_code: "MISSING_UPDATE_DATA",
-          message: "Please provide the fields you want to update",
-        });
+        return response.badRequest("Update data is required", res);
       }
 
       // Separate fields for each model
@@ -1594,14 +1621,7 @@ module.exports = class UserController {
         Object.keys(userFields).length === 0 &&
         Object.keys(addressFields).length === 0
       ) {
-        return response.badRequest("No valid fields provided for update", res, {
-          error_code: "INVALID_FIELDS",
-          message: "Please provide valid fields to update",
-          allowed_fields: {
-            user: allowedUserFields,
-            address: allowedAddressFields,
-          },
-        });
+        return response.badRequest("No valid fields provided for update", res);
       }
 
       // Handle full_name update if first_name or last_name is updated
