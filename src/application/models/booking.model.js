@@ -200,13 +200,13 @@ module.exports = (sequelize) => {
       });
     }
 
-    // Promo code relationship (commented out as PromoCode model doesn't exist yet)
-    // if (models.PromoCode) {
-    //   Booking.belongsTo(models.PromoCode, {
-    //     foreignKey: 'promo_code_id',
-    //     as: 'promoCode'
-    //   });
-    // }
+    // Promo code relationship
+    if (models.PromoCode) {
+      Booking.belongsTo(models.PromoCode, {
+        foreignKey: 'promo_code_id',
+        as: 'promoCode'
+      });
+    }
 
     // Booking services relationship
     if (models.BookingService) {

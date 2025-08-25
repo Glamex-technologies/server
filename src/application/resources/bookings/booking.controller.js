@@ -134,19 +134,27 @@ module.exports = class BookingController {
         services_count: bookingServices.length
       });
 
-      // Apply promo code if provided (commented out as PromoCode model doesn't exist yet)
+      // Apply promo code if provided
       let discountAmount = 0;
       let promoCodeId = null;
-      // if (data.promo_code) {
-      //   const promoCode = await db.models.PromoCode.findOne({
-      //     where: { code: data.promo_code, status: 1 }
-      //   });
-
-      //   if (promoCode) {
-      //     discountAmount = (subtotal * promoCode.discount_percentage) / 100;
-      //     promoCodeId = promoCode.id;
-      //   }
-      // }
+      if (data.promo_code) {
+        const PromoCodesResources = require('../promo-codes/promo-codes.resources');
+        const promoCodesResources = new PromoCodesResources();
+        
+        const validationResult = await promoCodesResources.validatePromoCode(
+          data.promo_code,
+          data.provider_id,
+          data.service_ids,
+          subtotal
+        );
+        
+        if (validationResult.valid) {
+          discountAmount = validationResult.discount_amount;
+          promoCodeId = validationResult.promo_code_id;
+        } else {
+          return response.badRequest(validationResult.error, res, false);
+        }
+      }
 
       const totalAmount = subtotal - discountAmount;
       const commissionAmount = (totalAmount * 15.0) / 100; // 15% commission
@@ -232,7 +240,27 @@ module.exports = class BookingController {
       
       console.log('✅ All booking services created successfully');
 
-      console.log('🔍 Step 7: Creating payment intent...');
+      // Track promo code usage if promo code was applied
+      if (promoCodeId && discountAmount > 0) {
+        console.log('🔍 Step 7: Tracking promo code usage...');
+        try {
+          const PromoCodesResources = require('../promo-codes/promo-codes.resources');
+          const promoCodesResources = new PromoCodesResources();
+          
+          await promoCodesResources.trackPromoCodeUsage(
+            promoCodeId,
+            customer.id,
+            booking.id,
+            discountAmount
+          );
+          console.log('✅ Promo code usage tracked successfully');
+        } catch (error) {
+          console.error('❌ Failed to track promo code usage:', error.message);
+          // Don't fail the booking creation if tracking fails
+        }
+      }
+
+      console.log('🔍 Step 8: Creating payment intent...');
       
       // Mock payment intent (replace with actual Stripe integration)
       const paymentIntent = {
@@ -243,6 +271,24 @@ module.exports = class BookingController {
       
       console.log('💳 Payment intent created:', paymentIntent);
 
+      // Get promo code details if applied
+      let promoCodeDetails = null;
+      if (promoCodeId) {
+        const PromoCodesResources = require('../promo-codes/promo-codes.resources');
+        const promoCodesResources = new PromoCodesResources();
+        const promoCode = await promoCodesResources.getPromoCodeById(promoCodeId);
+        if (promoCode) {
+          promoCodeDetails = {
+            id: promoCode.id,
+            code: promoCode.code,
+            name: promoCode.name,
+            discount_type: promoCode.discount_type,
+            discount_value: promoCode.discount_value,
+            minimum_bill_amount: promoCode.minimum_bill_amount
+          };
+        }
+      }
+
       const result = {
         booking_id: booking.id,
         booking_number: booking.booking_number,
@@ -250,6 +296,7 @@ module.exports = class BookingController {
         subtotal: subtotal,
         discount_amount: discountAmount,
         total_amount: totalAmount,
+        promo_code: promoCodeDetails,
         payment_intent: paymentIntent
       };
       

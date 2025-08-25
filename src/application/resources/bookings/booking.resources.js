@@ -61,12 +61,12 @@ module.exports = class BookingResources {
               }
             ]
           },
-          // Promo code relationship (commented out as PromoCode model doesn't exist yet)
-          // {
-          //   model: db.models.PromoCode,
-          //   as: 'promoCode',
-          //   attributes: ['id', 'code', 'discount_percentage']
-          // }
+          // Promo code relationship
+          {
+            model: db.models.PromoCode,
+            as: 'promoCode',
+            attributes: ['id', 'code', 'name', 'discount_type', 'discount_value']
+          }
         ]
       });
       return booking;
@@ -140,6 +140,12 @@ module.exports = class BookingResources {
                 attributes: ['id', 'title']
               }
             ]
+          },
+          // Promo code relationship
+          {
+            model: db.models.PromoCode,
+            as: 'promoCode',
+            attributes: ['id', 'code', 'name', 'discount_type', 'discount_value']
           }
         ],
         order: [['created_at', 'DESC']],

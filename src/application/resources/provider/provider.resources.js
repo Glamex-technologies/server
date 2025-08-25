@@ -95,6 +95,105 @@ module.exports = class ProviderResources {
   }
 
   /**
+   * Cascade delete provider and all related data
+   * @param {Number} providerId - ID of the service provider
+   * @param {Object} transaction - Database transaction object
+   * @returns {Promise<Object>} - Deletion result
+   */
+  async cascadeDeleteProvider(providerId, transaction = null) {
+    try {
+      const options = transaction ? { transaction } : {};
+      const deletionResults = [];
+      
+      // Soft delete all related data with error handling
+      const deletionPromises = [
+        // Service lists
+        ServiceList.update(
+          { status: 0, deleted_at: new Date() },
+          { where: { service_provider_id: providerId }, ...options }
+        ).then(result => {
+          deletionResults.push({ table: 'ServiceList', deleted: result[0] });
+        }).catch(error => {
+          console.log(`Error deleting ServiceList for provider ${providerId}:`, error.message);
+          deletionResults.push({ table: 'ServiceList', error: error.message });
+        }),
+        
+        // Availability records
+        ServiceProviderAvailability.update(
+          { available: 0, deleted_at: new Date() },
+          { where: { service_provider_id: providerId }, ...options }
+        ).then(result => {
+          deletionResults.push({ table: 'ServiceProviderAvailability', deleted: result[0] });
+        }).catch(error => {
+          console.log(`Error deleting ServiceProviderAvailability for provider ${providerId}:`, error.message);
+          deletionResults.push({ table: 'ServiceProviderAvailability', error: error.message });
+        }),
+        
+        // Bank details
+        BankDetails.update(
+          { deleted_at: new Date() },
+          { where: { service_provider_id: providerId }, ...options }
+        ).then(result => {
+          deletionResults.push({ table: 'BankDetails', deleted: result[0] });
+        }).catch(error => {
+          console.log(`Error deleting BankDetails for provider ${providerId}:`, error.message);
+          deletionResults.push({ table: 'BankDetails', error: error.message });
+        }),
+        
+        // Gallery images (if model exists)
+        db.models.Gallery ? db.models.Gallery.update(
+          { status: 0, deleted_at: new Date() },
+          { where: { provider_id: providerId }, ...options }
+        ).then(result => {
+          deletionResults.push({ table: 'Gallery', deleted: result[0] });
+        }).catch(error => {
+          console.log(`Error deleting Gallery for provider ${providerId}:`, error.message);
+          deletionResults.push({ table: 'Gallery', error: error.message });
+        }) : Promise.resolve(),
+        
+        // Promo codes (if model exists)
+        db.models.PromoCode ? db.models.PromoCode.update(
+          { status: 0, deleted_at: new Date() },
+          { where: { service_provider_id: providerId }, ...options }
+        ).then(result => {
+          deletionResults.push({ table: 'PromoCode', deleted: result[0] });
+        }).catch(error => {
+          console.log(`Error deleting PromoCode for provider ${providerId}:`, error.message);
+          deletionResults.push({ table: 'PromoCode', error: error.message });
+        }) : Promise.resolve()
+      ];
+
+      await Promise.all(deletionPromises);
+
+      // Soft delete the service provider
+      const providerResult = await ServiceProvider.update(
+        {
+          status: 0,
+          is_available: 0,
+          deleted_at: new Date(),
+        },
+        {
+          where: { id: providerId },
+          ...options
+        }
+      );
+
+      deletionResults.push({ table: 'ServiceProvider', deleted: providerResult[0] });
+
+      console.log(`Cascade deletion completed for provider ${providerId}:`, deletionResults);
+
+      return { 
+        success: true, 
+        message: 'Provider and all related data deleted successfully',
+        results: deletionResults
+      };
+    } catch (error) {
+      console.error('Error in cascade delete provider:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Create or update a ServiceProviderDetail record matching the query
    * @param {Object} data - Detail data to create or update
    * @param {Object} query - Where clause to find existing detail

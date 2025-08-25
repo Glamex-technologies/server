@@ -22,6 +22,7 @@ const SubCategoryRoutes = require("../application/resources/subCategory/subCateg
 const ServiceListRoutes = require("../application/resources/serviceList/serviceList.routes");
 const GalleryRoutes = require("../application/resources/gallery/gallery.routes");
 const BookingRoutes = require("../application/resources/bookings/booking.routes");
+const PromoCodesRoutes = require("../application/resources/promo-codes/promo-codes.routes");
 const ReferenceDataRoutes = require("../application/resources/reference-data/reference-data.routes");
 
 // Import all routes here and add them to the routes object
@@ -35,6 +36,7 @@ routes.use("/sub-category", SubCategoryRoutes);
 routes.use("/service-list", ServiceListRoutes);
 routes.use("/gallery", GalleryRoutes);
 routes.use("/api", BookingRoutes);
+routes.use("/promo-codes", PromoCodesRoutes);
 routes.use("/reference-data", ReferenceDataRoutes);
 
 module.exports = routes;
