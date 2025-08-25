@@ -3955,8 +3955,8 @@ module.exports = class ProviderController {
    * Delete provider account after password verification
    */
   /**
-   * Delete provider account with comprehensive soft deletion
-   * Implements industry-level account deletion with proper cleanup
+   * Delete provider account with comprehensive cascade deletion
+   * Implements industry-level account deletion with proper cleanup and cascade constraints
    */
   async deleteMyAccount(req, res) {
     console.log("ProviderController@deleteMyAccount");
@@ -3983,45 +3983,12 @@ module.exports = class ProviderController {
       const transaction = await db.sequelize.transaction();
 
       try {
-        // Soft delete related data first (if provider exists)
+        // Cascade delete all provider-related data first (if provider exists)
         if (provider) {
-          // Soft delete service lists
-          await ServiceList.update(
-            { status: 0, deleted_at: new Date() },
-            {
-              where: { service_provider_id: provider.id },
-              transaction,
-            }
-          );
+          // Use the cascade delete helper method
+          await providerResources.cascadeDeleteProvider(provider.id, transaction);
 
-          // Soft delete availability records
-          await ServiceProviderAvailability.update(
-            { available: 0, deleted_at: new Date() },
-            {
-              where: { service_provider_id: provider.id },
-              transaction,
-            }
-          );
-
-          // Soft delete bank details
-          await BankDetails.update(
-            { deleted_at: new Date() },
-            {
-              where: { service_provider_id: provider.id },
-              transaction,
-            }
-          );
-
-          // Soft delete gallery images
-          await db.models.Gallery.update(
-            { status: 0, deleted_at: new Date() },
-            {
-              where: { provider_id: provider.id },
-              transaction,
-            }
-          );
-
-          // Soft delete service provider address
+          // Soft delete service provider address (user-specific)
           await ServiceProviderAddress.update(
             { deleted_at: new Date() },
             {
@@ -4030,25 +3997,13 @@ module.exports = class ProviderController {
             }
           );
 
-          // Soft delete the service provider
-          await ServiceProvider.update(
-            {
-              status: 0,
-              is_available: 0,
-              deleted_at: new Date(),
-            },
-            {
-              where: { id: provider.id },
-              transaction,
-            }
-          );
-
           console.log(
-            `Service provider ${provider.id} soft deleted successfully`
+            `Service provider ${provider.id} and all related data soft deleted successfully using cascade`
           );
         }
 
-        // Soft delete user account
+        // Soft delete user account - this will cascade to service provider due to foreign key constraint
+        // The CASCADE constraint ensures that if user is deleted, service provider is also deleted
         await User.update(
           {
             status: 0,
@@ -4099,11 +4054,11 @@ module.exports = class ProviderController {
           "Your account has been deleted successfully",
           res,
           {
-            message: "Account deletion completed",
+            message: "Account deletion completed with cascade cleanup",
             user_id: user.id,
             provider_id: provider?.id,
             deletion_timestamp: new Date().toISOString(),
-            note: "Your account has been soft deleted successfully.",
+            note: "Your account and all related data have been soft deleted successfully with cascade constraints.",
           }
         );
       } catch (transactionError) {
